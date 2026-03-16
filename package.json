@@ -1,0 +1,35 @@
+{
+  "name": "obsidian-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server providing read/write access to an Obsidian vault",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "obsidian-mcp-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --transport http",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27",
+    "express": "^5.0",
+    "glob": "^10.0",
+    "gray-matter": "^4.0",
+    "zod": "^3.24"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0",
+    "@types/node": "^22.0",
+    "typescript": "^5.7",
+    "vitest": "^3.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

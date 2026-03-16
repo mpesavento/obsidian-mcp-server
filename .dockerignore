@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.git/
+.claude/
+tests/
+docs/
+*.tgz
+*.md
+!package.json
