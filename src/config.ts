@@ -1,4 +1,8 @@
+import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
+
+// Load .env file if present (no error if missing)
+loadDotenv({ quiet: true });
 
 const envSchema = z.object({
   VAULT_PATH: z.string().min(1, "VAULT_PATH is required"),
