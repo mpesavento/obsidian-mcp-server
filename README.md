@@ -4,6 +4,7 @@ MCP server providing read/write access to an Obsidian vault. Supports both local
 
 ## Tools
 
+### CRUD Operations
 | Tool | Description |
 |------|-------------|
 | `vault_read` | Read a note's content + parsed YAML frontmatter |
@@ -11,11 +12,26 @@ MCP server providing read/write access to an Obsidian vault. Supports both local
 | `vault_append` | Append content to a note with separator (ideal for log entries) |
 | `vault_delete` | Soft-delete to `.trash/` |
 | `vault_move` | Move or rename a note |
+
+### Search & Discovery
+| Tool | Description |
+|------|-------------|
 | `vault_search` | Full-text search (ripgrep with Node.js fallback) |
 | `vault_list` | List files/folders in a directory |
 | `vault_recent` | Recently modified notes |
 | `vault_frontmatter` | Read or atomically update frontmatter fields |
 | `vault_info` | Vault stats and folder structure |
+
+### Semantic Search (QMD)
+| Tool | Description |
+|------|-------------|
+| `vault_semantic_search` | BM25 keyword search — fast, local, always available |
+| `vault_vector_search` | Embedding-based similarity search (requires `qmd embed`) |
+| `vault_hybrid_search` | BM25 + query expansion + LLM reranking |
+| `vault_search_status` | Check QMD index status and embedding availability |
+| `vault_search_update` | Update the QMD index after vault changes |
+
+> **Note:** Semantic search tools require [QMD](https://github.com/tobi/qmd) to be installed (`npm i -g @tobilu/qmd`) and the vault indexed (`qmd collection add /path/to/vault --name exobrain`). See [docs/deployment.md](docs/deployment.md) for setup.
 
 ## Quick Start
 

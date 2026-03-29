@@ -128,6 +128,60 @@ curl https://YOUR-PI-HOSTNAME.tail12345.ts.net/health
 
 ### Step 4: Create a systemd service
 
+You have two options: **user-level** (recommended for personal use) or **system-level**.
+
+#### Option A: User-level service (recommended)
+
+User-level services are easier to manage, don't require sudo, and run with your normal file permissions.
+
+```bash
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/obsidian-mcp-server.service << 'EOF'
+[Unit]
+Description=Obsidian MCP Server (ExoBrain)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mpesavento/projects/obsidian-mcp-server
+ExecStart=/usr/bin/node dist/index.js --transport http
+Restart=always
+RestartSec=5
+
+# The .env file in WorkingDirectory is loaded automatically by dotenv
+# Add any additional environment variables here:
+Environment=QMD_COLLECTION=exobrain
+
+[Install]
+WantedBy=default.target
+EOF
+
+# Enable linger so the service starts at boot (without requiring login)
+loginctl enable-linger $USER
+
+# Start the service
+systemctl --user daemon-reload
+systemctl --user enable obsidian-mcp-server
+systemctl --user start obsidian-mcp-server
+
+# Check status
+systemctl --user status obsidian-mcp-server
+journalctl --user -u obsidian-mcp-server -f   # follow logs
+```
+
+**Managing the service:**
+```bash
+systemctl --user start obsidian-mcp-server
+systemctl --user stop obsidian-mcp-server
+systemctl --user restart obsidian-mcp-server
+systemctl --user status obsidian-mcp-server
+```
+
+#### Option B: System-level service
+
+Use this for multi-user servers or when you want stricter isolation.
+
 ```bash
 sudo tee /etc/systemd/system/obsidian-mcp.service > /dev/null << 'EOF'
 [Unit]
@@ -161,7 +215,75 @@ sudo journalctl -u obsidian-mcp -f   # follow logs
 > **Note:** If Node.js was installed via nvm, update `ExecStart` to use the full path:
 > `ExecStart=/home/pi/.nvm/versions/node/v24.x.x/bin/node dist/index.js --transport http`
 
-### Step 5: Connect Claude Code remotely
+#### Troubleshooting: Port already in use
+
+If the service fails to start, check for orphan processes on port 3100:
+
+```bash
+lsof -i :3100
+# Kill any orphan process
+kill <PID>
+# Then restart
+systemctl --user restart obsidian-mcp-server
+```
+
+### Step 5: Set up QMD semantic search (optional)
+
+The server includes semantic search tools (`vault_semantic_search`, `vault_vector_search`, `vault_hybrid_search`) powered by [QMD](https://github.com/tobi/qmd). These require QMD to be installed and the vault to be indexed.
+
+#### Install QMD
+
+```bash
+npm install -g @tobilu/qmd
+```
+
+#### Index the vault
+
+```bash
+# Create the collection (one-time)
+qmd collection add /path/to/your/vault --name exobrain --mask "**/*.md"
+
+# Verify
+qmd collection list
+```
+
+#### Generate embeddings (optional, enables vector search)
+
+BM25 keyword search works immediately. For semantic similarity search, generate embeddings:
+
+```bash
+qmd embed
+```
+
+> **Note:** This is CPU-intensive and takes ~50 minutes on a Raspberry Pi 5 (1031 chunks). Run it once; subsequent updates are incremental.
+
+#### Configure the MCP server
+
+Set the collection name via environment variable:
+
+```bash
+# In .env or systemd service
+QMD_COLLECTION=exobrain
+```
+
+#### Verify search tools
+
+```bash
+curl -s http://localhost:3100/health  # server running
+
+# Test via MCP (requires auth)
+curl -X POST https://your-url/ \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"vault_search_status","arguments":{}},"id":1}'
+```
+
+The `vault_search_status` tool shows:
+- Whether QMD is available
+- Number of files indexed
+- Whether embeddings are available
+
+### Step 6: Connect Claude Code remotely
 
 ```bash
 claude mcp add obsidian-vault \
