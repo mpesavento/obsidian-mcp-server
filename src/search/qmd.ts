@@ -207,6 +207,13 @@ async function runQmd(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn("qmd", args, {
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // Disable CUDA to prevent node-llama-cpp from trying to build with CUDA
+        // on systems without proper CUDA toolkit (like Raspberry Pi with gstreamer-cuda libs)
+        NODE_LLAMA_CPP_SKIP_CUDA: "true",
+        GGML_CUDA: "0",
+      },
     });
 
     let stdout = "";

@@ -216,6 +216,29 @@ export function registerSemanticTools(server: McpServer): void {
           };
         }
 
+        // Hybrid search requires local LLMs which don't work well on Raspberry Pi
+        // due to missing CUDA/toolchain support. Use semantic_search instead.
+        if (process.arch === "arm64" || process.arch === "arm") {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  {
+                    query,
+                    error: "Hybrid search is not available on Raspberry Pi (ARM architecture).",
+                    reason: "Hybrid search requires local LLMs for query expansion and reranking, which need CUDA/toolchain support not available on this platform.",
+                    suggestion: "Use vault_semantic_search instead - it provides fast BM25 keyword search with excellent results on Pi.",
+                    alternative: "vault_semantic_search",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
         const results = await qmdHybridQuery(query, {
           maxResults: max_results,
           zone,
