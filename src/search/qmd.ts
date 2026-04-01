@@ -27,7 +27,7 @@ const ZONE_PREFIXES: Record<string, string> = {
   context: "20-context",
   knowledge: "30-knowledge",
   queues: "50-queues",
-  log: "60-log",
+  log: "60-daily",
   introspection: "70-introspection",
 };
 

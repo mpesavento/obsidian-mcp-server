@@ -20,7 +20,7 @@ export function registerCrudTools(server: McpServer): void {
         path: z
           .string()
           .describe(
-            "Vault-relative path to the note (e.g. '00-meta/CLAUDE_BRIEFING' or '60-log/entry.md'). Extension .md is optional."
+            "Vault-relative path to the note (e.g. '00-meta/CLAUDE_BRIEFING' or '60-daily/entry.md'). Extension .md is optional."
           ),
       },
     },

@@ -22,7 +22,7 @@ export function registerSearchTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Restrict search to a subdirectory (e.g. '60-log' or '20-context/entities')"
+            "Restrict search to a subdirectory (e.g. '60-daily' or '20-context/entities')"
           ),
         max_results: z
           .number()

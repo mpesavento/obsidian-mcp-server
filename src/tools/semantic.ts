@@ -21,7 +21,7 @@ Zones filter results to specific vault areas:
 - context: 20-context/ (projects, entities, platforms)
 - knowledge: 30-knowledge/ (reusable knowledge artifacts)
 - queues: 50-queues/ (task queues)
-- log: 60-log/ (daily logs)
+- log: 60-daily/ (daily logs)
 - introspection: 70-introspection/ (insights, patterns)
 `.trim();
 
