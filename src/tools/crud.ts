@@ -100,49 +100,7 @@ export function registerCrudTools(server: McpServer): void {
     }
   );
 
-  server.registerTool(
-    "vault_append",
-    {
-      title: "Append to Note",
-      description:
-        "Append content to an existing note with a separator. Updates modified timestamp and last_modified_by in frontmatter. Ideal for log entries and incremental additions.",
-      inputSchema: {
-        path: z
-          .string()
-          .describe("Vault-relative path to the note"),
-        content: z
-          .string()
-          .describe("Content to append"),
-        separator: z
-          .string()
-          .default("\n\n---\n\n")
-          .describe("Separator between existing content and appended content"),
-        agent_name: z
-          .string()
-          .optional()
-          .describe("Agent name for attribution"),
-      },
-    },
-    async ({ path, content, separator, agent_name }) => {
-      try {
-        await appendToNote(path, content, {
-          separator,
-          agentName: agent_name,
-        });
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({ success: true, path }),
-            },
-          ],
-        };
-      } catch (err) {
-        return errorResult(err);
-      }
-    }
-  );
-
+  // vault_patch registered early - high priority for Claude.ai tool cap
   server.registerTool(
     "vault_patch",
     {
@@ -179,6 +137,49 @@ export function registerCrudTools(server: McpServer): void {
                 path,
                 matches_replaced: result.matchCount,
               }),
+            },
+          ],
+        };
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "vault_append",
+    {
+      title: "Append to Note",
+      description:
+        "Append content to an existing note with a separator. Updates modified timestamp and last_modified_by in frontmatter. Ideal for log entries and incremental additions.",
+      inputSchema: {
+        path: z
+          .string()
+          .describe("Vault-relative path to the note"),
+        content: z
+          .string()
+          .describe("Content to append"),
+        separator: z
+          .string()
+          .default("\n\n---\n\n")
+          .describe("Separator between existing content and appended content"),
+        agent_name: z
+          .string()
+          .optional()
+          .describe("Agent name for attribution"),
+      },
+    },
+    async ({ path, content, separator, agent_name }) => {
+      try {
+        await appendToNote(path, content, {
+          separator,
+          agentName: agent_name,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ success: true, path }),
             },
           ],
         };

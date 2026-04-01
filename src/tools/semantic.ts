@@ -1,6 +1,8 @@
 /**
  * Semantic search tools using QMD (Query Markup Documents).
- * Provides BM25 keyword search and vector similarity search.
+ * Provides BM25 keyword search, vector similarity search, and hybrid search.
+ * 
+ * Consolidated to reduce tool count for Claude.ai tool cap limitations.
  */
 
 import { z } from "zod";
@@ -28,16 +30,23 @@ Zones filter results to specific vault areas:
 - archive: 90-archive/ (completed/inactive items)
 `.trim();
 
+const ZONE_ENUM = ["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"] as const;
+
 export function registerSemanticTools(server: McpServer): void {
+  // Unified search tool - consolidates keyword, vector, and hybrid search
   server.registerTool(
-    "vault_keyword_search",
+    "vault_search",
     {
-      title: "Keyword Search (BM25)",
-      description: `Search vault using BM25 keyword matching. Fast, local, cost-free. Use for finding specific terms, names, or phrases. For conceptual/semantic similarity, use vault_vector_search instead. ${ZONE_DESCRIPTIONS}`,
+      title: "Search Vault (Unified)",
+      description: `Search vault with multiple modes. 'keyword' = BM25 text matching (fast, local). 'vector' = semantic similarity via embeddings (conceptual). 'hybrid' = keyword + query expansion + reranking (best quality, slower). Default: keyword. ${ZONE_DESCRIPTIONS}`,
       inputSchema: {
-        query: z.string().describe("Search query (keywords matched against document content)"),
+        query: z.string().describe("Search query"),
+        mode: z
+          .enum(["keyword", "vector", "hybrid"])
+          .default("keyword")
+          .describe("Search mode: 'keyword' (BM25, fast), 'vector' (semantic similarity), 'hybrid' (best quality, slower)"),
         zone: z
-          .enum(["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"])
+          .enum(ZONE_ENUM)
           .optional()
           .describe("Filter results to a specific vault zone"),
         max_results: z
@@ -48,7 +57,7 @@ export function registerSemanticTools(server: McpServer): void {
           .describe("Maximum number of results to return"),
       },
     },
-    async ({ query, zone, max_results }) => {
+    async ({ query, mode, zone, max_results }) => {
       try {
         if (!(await isQmdAvailable())) {
           return {
@@ -62,98 +71,70 @@ export function registerSemanticTools(server: McpServer): void {
           };
         }
 
-        const results = await qmdSearch(query, {
-          maxResults: max_results,
-          zone,
-        });
+        let results;
+        let engine: string;
 
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  query,
-                  zone: zone || "all",
-                  engine: "qmd-bm25",
-                  total: results.length,
-                  results: results.map((r) => ({
-                    file: r.file.replace("qmd://exobrain/", ""),
-                    score: Math.round(r.score * 100) + "%",
-                    title: r.title,
-                    snippet: r.snippet,
-                  })),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      } catch (err) {
-        return errorResult(err);
-      }
-    }
-  );
-
-  server.registerTool(
-    "vault_vector_search",
-    {
-      title: "Vector Search",
-      description: `Search vault using semantic similarity (embeddings). Better for conceptual queries where exact keywords may not match. Requires embeddings to be generated first (qmd embed). ${ZONE_DESCRIPTIONS}`,
-      inputSchema: {
-        query: z.string().describe("Natural language query (matched by semantic similarity)"),
-        zone: z
-          .enum(["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"])
-          .optional()
-          .describe("Filter results to a specific vault zone"),
-        max_results: z
-          .number()
-          .int()
-          .positive()
-          .default(10)
-          .describe("Maximum number of results to return"),
-      },
-    },
-    async ({ query, zone, max_results }) => {
-      try {
-        if (!(await isQmdAvailable())) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text" as const,
-                text: "QMD is not available. Install with: npm install -g @tobilu/qmd",
-              },
-            ],
-          };
-        }
-
-        const results = await qmdVectorSearch(query, {
-          maxResults: max_results,
-          zone,
-        });
-
-        if (results.length === 0) {
-          // Check if embeddings exist
-          const status = await qmdStatus();
-          if (!status.hasEmbeddings) {
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify(
+        switch (mode) {
+          case "vector": {
+            results = await qmdVectorSearch(query, { maxResults: max_results, zone });
+            engine = "qmd-vector";
+            
+            if (results.length === 0) {
+              const status = await qmdStatus();
+              if (!status.hasEmbeddings) {
+                return {
+                  content: [
                     {
-                      query,
-                      error: "No embeddings found. Run 'qmd embed' to generate vector embeddings.",
-                      suggestion: "Use vault_semantic_search for keyword-based search instead.",
+                      type: "text" as const,
+                      text: JSON.stringify(
+                        {
+                          query,
+                          mode,
+                          error: "No embeddings found. Run 'qmd embed' to generate vector embeddings.",
+                          suggestion: "Use mode='keyword' for keyword-based search instead.",
+                        },
+                        null,
+                        2
+                      ),
                     },
-                    null,
-                    2
-                  ),
-                },
-              ],
-            };
+                  ],
+                };
+              }
+            }
+            break;
+          }
+
+          case "hybrid": {
+            // Check for ARM architecture - hybrid search not supported
+            if (process.arch === "arm64") {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: "text" as const,
+                    text: JSON.stringify(
+                      {
+                        error: "Hybrid search requires local LLM inference which is not available on ARM architecture.",
+                        suggestion: "Use mode='keyword' for BM25 search or mode='vector' for semantic similarity instead.",
+                        reason: "node-llama-cpp cannot build on ARM without CUDA toolchain.",
+                      },
+                      null,
+                      2
+                    ),
+                  },
+                ],
+              };
+            }
+            results = await qmdHybridQuery(query, { maxResults: max_results, zone });
+            engine = "qmd-hybrid";
+            break;
+          }
+
+          case "keyword":
+          default: {
+            results = await qmdSearch(query, { maxResults: max_results, zone });
+            engine = "qmd-bm25";
+            break;
           }
         }
 
@@ -164,8 +145,9 @@ export function registerSemanticTools(server: McpServer): void {
               text: JSON.stringify(
                 {
                   query,
+                  mode,
                   zone: zone || "all",
-                  engine: "qmd-vector",
+                  engine,
                   total: results.length,
                   results: results.map((r) => ({
                     file: r.file.replace("qmd://exobrain/", ""),
@@ -186,101 +168,13 @@ export function registerSemanticTools(server: McpServer): void {
     }
   );
 
-  server.registerTool(
-    "vault_hybrid_search",
-    {
-      title: "Hybrid Search",
-      description: `Search vault using hybrid approach: BM25 keyword matching + query expansion + LLM reranking. Best quality but slower. Requires embeddings for full functionality. ${ZONE_DESCRIPTIONS}`,
-      inputSchema: {
-        query: z.string().describe("Search query (will be expanded and results reranked)"),
-        zone: z
-          .enum(["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"])
-          .optional()
-          .describe("Filter results to a specific vault zone"),
-        max_results: z
-          .number()
-          .int()
-          .positive()
-          .default(10)
-          .describe("Maximum number of results to return"),
-      },
-    },
-    async ({ query, zone, max_results }) => {
-      try {
-        if (!(await isQmdAvailable())) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text" as const,
-                text: "QMD is not available. Install with: npm install -g @tobilu/qmd",
-              },
-            ],
-          };
-        }
-
-        // Hybrid search requires local LLMs which don't work well on Raspberry Pi
-        // due to missing CUDA/toolchain support. Use semantic_search instead.
-        if (process.arch === "arm64" || process.arch === "arm") {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify(
-                  {
-                    query,
-                    error: "Hybrid search is not available on Raspberry Pi (ARM architecture).",
-                    reason: "Hybrid search requires local LLMs for query expansion and reranking, which need CUDA/toolchain support not available on this platform.",
-                    suggestion: "Use vault_semantic_search instead - it provides fast BM25 keyword search with excellent results on Pi.",
-                    alternative: "vault_semantic_search",
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          };
-        }
-
-        const results = await qmdHybridQuery(query, {
-          maxResults: max_results,
-          zone,
-        });
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  query,
-                  zone: zone || "all",
-                  engine: "qmd-hybrid",
-                  total: results.length,
-                  results: results.map((r) => ({
-                    file: r.file.replace("qmd://exobrain/", ""),
-                    score: Math.round(r.score * 100) + "%",
-                    title: r.title,
-                    snippet: r.snippet,
-                  })),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      } catch (err) {
-        return errorResult(err);
-      }
-    }
-  );
-
+  // Search status tool
   server.registerTool(
     "vault_search_status",
     {
-      title: "Search Status",
-      description: "Check the status of the QMD search index, including collection info and whether embeddings are available.",
+      title: "Search Index Status",
+      description:
+        "Check the status of the vault search index (QMD). Shows whether the index exists, when it was last updated, and if embeddings are available for vector search.",
       inputSchema: {},
     },
     async () => {
@@ -292,8 +186,8 @@ export function registerSemanticTools(server: McpServer): void {
                 type: "text" as const,
                 text: JSON.stringify(
                   {
-                    qmd_available: false,
-                    message: "QMD is not installed. Install with: npm install -g @tobilu/qmd",
+                    available: false,
+                    error: "QMD is not installed. Install with: npm install -g @tobilu/qmd",
                   },
                   null,
                   2
@@ -304,26 +198,14 @@ export function registerSemanticTools(server: McpServer): void {
         }
 
         const status = await qmdStatus();
-
         return {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify(
                 {
-                  qmd_available: true,
-                  collection: status.collection,
-                  files_indexed: status.files,
-                  embeddings_available: status.hasEmbeddings,
-                  tools: {
-                    vault_semantic_search: "BM25 keyword search (always available)",
-                    vault_vector_search: status.hasEmbeddings
-                      ? "Vector similarity (available)"
-                      : "Vector similarity (requires: qmd embed)",
-                    vault_hybrid_search: status.hasEmbeddings
-                      ? "Hybrid search (available)"
-                      : "Hybrid search (limited without embeddings)",
-                  },
+                  available: true,
+                  ...status,
                 },
                 null,
                 2
@@ -337,11 +219,13 @@ export function registerSemanticTools(server: McpServer): void {
     }
   );
 
+  // Search index update tool
   server.registerTool(
     "vault_search_update",
     {
       title: "Update Search Index",
-      description: "Update the QMD search index to reflect recent vault changes. Run this after adding or modifying notes.",
+      description:
+        "Update the vault search index to reflect recent file changes. Run this after adding or modifying many files to ensure search results are current.",
       inputSchema: {},
     },
     async () => {
@@ -359,7 +243,6 @@ export function registerSemanticTools(server: McpServer): void {
         }
 
         const output = await qmdUpdateIndex();
-
         return {
           content: [
             {
@@ -367,8 +250,7 @@ export function registerSemanticTools(server: McpServer): void {
               text: JSON.stringify(
                 {
                   success: true,
-                  message: "Index updated successfully",
-                  details: output.trim(),
+                  message: output.trim() || "Index updated",
                 },
                 null,
                 2
@@ -384,8 +266,7 @@ export function registerSemanticTools(server: McpServer): void {
 }
 
 function errorResult(err: unknown) {
-  const message =
-    err instanceof Error ? err.message : String(err);
+  const message = err instanceof Error ? err.message : String(err);
   return {
     isError: true,
     content: [{ type: "text" as const, text: message }],
