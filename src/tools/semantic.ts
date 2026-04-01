@@ -11,7 +11,6 @@ import {
   isQmdAvailable,
   qmdSearch,
   qmdVectorSearch,
-  qmdHybridQuery,
   qmdStatus,
   qmdUpdateIndex,
 } from "../search/qmd.js";
@@ -33,18 +32,19 @@ Zones filter results to specific vault areas:
 const ZONE_ENUM = ["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"] as const;
 
 export function registerSemanticTools(server: McpServer): void {
-  // Unified search tool - consolidates keyword, vector, and hybrid search
+  // Unified search tool - consolidates keyword and vector search
+  // Note: hybrid mode disabled until better hardware (requires local LLM inference)
   server.registerTool(
     "vault_search",
     {
       title: "Search Vault (Unified)",
-      description: `Search vault with multiple modes. 'keyword' = BM25 text matching (fast, local). 'vector' = semantic similarity via embeddings (conceptual). 'hybrid' = keyword + query expansion + reranking (best quality, slower). Default: keyword. ${ZONE_DESCRIPTIONS}`,
+      description: `Search vault with multiple modes. 'vector' (default) = semantic similarity via embeddings, best for conceptual queries. 'keyword' = BM25 text matching, best for exact terms/names. ${ZONE_DESCRIPTIONS}`,
       inputSchema: {
         query: z.string().describe("Search query"),
         mode: z
-          .enum(["keyword", "vector", "hybrid"])
-          .default("keyword")
-          .describe("Search mode: 'keyword' (BM25, fast), 'vector' (semantic similarity), 'hybrid' (best quality, slower)"),
+          .enum(["keyword", "vector"])
+          .default("vector")
+          .describe("Search mode: 'vector' (semantic similarity, default), 'keyword' (BM25 exact matching)"),
         zone: z
           .enum(ZONE_ENUM)
           .optional()
@@ -101,32 +101,6 @@ export function registerSemanticTools(server: McpServer): void {
                 };
               }
             }
-            break;
-          }
-
-          case "hybrid": {
-            // Check for ARM architecture - hybrid search not supported
-            if (process.arch === "arm64") {
-              return {
-                isError: true,
-                content: [
-                  {
-                    type: "text" as const,
-                    text: JSON.stringify(
-                      {
-                        error: "Hybrid search requires local LLM inference which is not available on ARM architecture.",
-                        suggestion: "Use mode='keyword' for BM25 search or mode='vector' for semantic similarity instead.",
-                        reason: "node-llama-cpp cannot build on ARM without CUDA toolchain.",
-                      },
-                      null,
-                      2
-                    ),
-                  },
-                ],
-              };
-            }
-            results = await qmdHybridQuery(query, { maxResults: max_results, zone });
-            engine = "qmd-hybrid";
             break;
           }
 
