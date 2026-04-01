@@ -18,23 +18,26 @@ const ZONE_DESCRIPTIONS = `
 Zones filter results to specific vault areas:
 - meta: 00-meta/ (agent protocols, conventions)
 - identity: 10-identity/ (Mike's identity, values)
-- context: 20-context/ (projects, entities, platforms)
+- people: 15-people/ (entity files for people)
+- context: 20-context/ (projects, platforms)
 - knowledge: 30-knowledge/ (reusable knowledge artifacts)
+- playbooks: 35-playbooks/ (operational runbooks, how-to guides)
 - queues: 50-queues/ (task queues)
-- log: 60-daily/ (daily logs)
+- daily: 60-daily/ (daily notes)
 - introspection: 70-introspection/ (insights, patterns)
+- archive: 90-archive/ (completed/inactive items)
 `.trim();
 
 export function registerSemanticTools(server: McpServer): void {
   server.registerTool(
-    "vault_semantic_search",
+    "vault_keyword_search",
     {
-      title: "Semantic Search",
-      description: `Search vault using BM25 keyword matching. Fast, local, cost-free. Use for finding specific terms, names, or phrases. ${ZONE_DESCRIPTIONS}`,
+      title: "Keyword Search (BM25)",
+      description: `Search vault using BM25 keyword matching. Fast, local, cost-free. Use for finding specific terms, names, or phrases. For conceptual/semantic similarity, use vault_vector_search instead. ${ZONE_DESCRIPTIONS}`,
       inputSchema: {
         query: z.string().describe("Search query (keywords matched against document content)"),
         zone: z
-          .enum(["meta", "identity", "context", "knowledge", "queues", "log", "introspection"])
+          .enum(["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"])
           .optional()
           .describe("Filter results to a specific vault zone"),
         max_results: z
@@ -101,7 +104,7 @@ export function registerSemanticTools(server: McpServer): void {
       inputSchema: {
         query: z.string().describe("Natural language query (matched by semantic similarity)"),
         zone: z
-          .enum(["meta", "identity", "context", "knowledge", "queues", "log", "introspection"])
+          .enum(["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"])
           .optional()
           .describe("Filter results to a specific vault zone"),
         max_results: z
@@ -191,7 +194,7 @@ export function registerSemanticTools(server: McpServer): void {
       inputSchema: {
         query: z.string().describe("Search query (will be expanded and results reranked)"),
         zone: z
-          .enum(["meta", "identity", "context", "knowledge", "queues", "log", "introspection"])
+          .enum(["meta", "identity", "people", "context", "knowledge", "playbooks", "queues", "daily", "introspection", "archive"])
           .optional()
           .describe("Filter results to a specific vault zone"),
         max_results: z

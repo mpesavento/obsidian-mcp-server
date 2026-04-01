@@ -24,11 +24,14 @@ export interface QmdSearchOptions {
 const ZONE_PREFIXES: Record<string, string> = {
   meta: "00-meta",
   identity: "10-identity",
+  people: "15-people",
   context: "20-context",
   knowledge: "30-knowledge",
+  playbooks: "35-playbooks",
   queues: "50-queues",
-  log: "60-daily",
+  daily: "60-daily",
   introspection: "70-introspection",
+  archive: "90-archive",
 };
 
 /**

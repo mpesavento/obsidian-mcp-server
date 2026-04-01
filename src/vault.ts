@@ -190,6 +190,58 @@ export async function appendToNote(
 }
 
 /**
+ * Patch a note by replacing a unique string with another.
+ * The old_str must appear exactly once in the file content (not frontmatter).
+ * Updates modified timestamp and last_modified_by in frontmatter.
+ */
+export async function patchNote(
+  relativePath: string,
+  oldStr: string,
+  newStr: string,
+  options: {
+    agentName?: string;
+  } = {}
+): Promise<{ matchCount: number }> {
+  relativePath = ensureMdExtension(relativePath);
+  validateFilePath(relativePath);
+  const fullPath = resolveVaultPath(relativePath);
+  const agentName = options.agentName || getConfig().AGENT_NAME_DEFAULT;
+  const now = new Date().toISOString();
+
+  const existing = await readNote(relativePath);
+
+  // Count occurrences of oldStr in content
+  const matches = existing.content.split(oldStr).length - 1;
+
+  if (matches === 0) {
+    throw new VaultError(
+      `String not found in note content: "${oldStr.slice(0, 50)}${oldStr.length > 50 ? "..." : ""}"`,
+      "PATCH_NOT_FOUND"
+    );
+  }
+
+  if (matches > 1) {
+    throw new VaultError(
+      `String appears ${matches} times in note content (must be unique). Use a more specific match string.`,
+      "PATCH_AMBIGUOUS"
+    );
+  }
+
+  // Replace the string
+  const newContent = existing.content.replace(oldStr, newStr);
+
+  // Update frontmatter
+  const fm: NoteFrontmatter = { ...existing.frontmatter };
+  fm.modified = now;
+  fm.last_modified_by = agentName;
+
+  const serialized = matter.stringify(newContent, fm);
+  await atomicWrite(fullPath, serialized);
+
+  return { matchCount: 1 };
+}
+
+/**
  * Soft-delete a note by moving it to .trash/.
  */
 export async function deleteNote(relativePath: string): Promise<void> {
@@ -424,7 +476,9 @@ export type VaultErrorCode =
   | "EXCLUDED_DIR"
   | "INVALID_EXTENSION"
   | "NOT_FOUND"
-  | "ALREADY_EXISTS";
+  | "ALREADY_EXISTS"
+  | "PATCH_NOT_FOUND"
+  | "PATCH_AMBIGUOUS";
 
 export class VaultError extends Error {
   code: VaultErrorCode;

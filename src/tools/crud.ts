@@ -4,6 +4,7 @@ import {
   readNote,
   writeNote,
   appendToNote,
+  patchNote,
   deleteNote,
   moveNote,
   VaultError,
@@ -133,6 +134,51 @@ export function registerCrudTools(server: McpServer): void {
             {
               type: "text" as const,
               text: JSON.stringify({ success: true, path }),
+            },
+          ],
+        };
+      } catch (err) {
+        return errorResult(err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "vault_patch",
+    {
+      title: "Patch Note",
+      description:
+        "Replace a unique string in a note with another string. The old_str must appear exactly once in the file content (not frontmatter). Use for surgical edits: updating links, fixing sections, replacing status fields. Updates modified timestamp.",
+      inputSchema: {
+        path: z
+          .string()
+          .describe("Vault-relative path to the note"),
+        old_str: z
+          .string()
+          .describe("Exact string to find and replace (must appear exactly once in content)"),
+        new_str: z
+          .string()
+          .describe("Replacement string"),
+        agent_name: z
+          .string()
+          .optional()
+          .describe("Agent name for attribution"),
+      },
+    },
+    async ({ path, old_str, new_str, agent_name }) => {
+      try {
+        const result = await patchNote(path, old_str, new_str, {
+          agentName: agent_name,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                success: true,
+                path,
+                matches_replaced: result.matchCount,
+              }),
             },
           ],
         };
