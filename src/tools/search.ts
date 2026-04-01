@@ -11,11 +11,11 @@ import { nativeSearch } from "../search/native.js";
 
 export function registerSearchTools(server: McpServer): void {
   server.registerTool(
-    "vault_search",
+    "vault_grep",
     {
-      title: "Search Vault",
+      title: "Grep Vault",
       description:
-        "Full-text search across vault notes. Uses ripgrep if available, falls back to pure Node.js search. Case-insensitive.",
+        "Full-text grep search across vault notes. Uses ripgrep if available, falls back to pure Node.js search. Case-insensitive. Use vault_search for semantic/keyword search instead.",
       inputSchema: {
         query: z.string().describe("Search query (plain text, matched case-insensitively)"),
         path_filter: z
