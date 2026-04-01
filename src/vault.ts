@@ -111,6 +111,9 @@ export async function readNote(relativePath: string): Promise<NoteData> {
   };
 }
 
+// Maximum content size (500KB default, can be overridden via env)
+const MAX_CONTENT_SIZE = parseInt(process.env.MAX_CONTENT_SIZE || "500000", 10);
+
 /**
  * Write a note to the vault with atomic write (write to .tmp, then rename).
  * Auto-manages created/modified/created_by/last_modified_by in frontmatter.
@@ -124,6 +127,14 @@ export async function writeNote(
     agentName?: string;
   } = {}
 ): Promise<void> {
+  // Check content size before processing
+  if (content.length > MAX_CONTENT_SIZE) {
+    throw new VaultError(
+      `Content exceeds maximum size of ${Math.round(MAX_CONTENT_SIZE / 1000)}KB (got ${Math.round(content.length / 1000)}KB). Split into smaller files or reduce content.`,
+      "CONTENT_TOO_LARGE"
+    );
+  }
+
   relativePath = ensureMdExtension(relativePath);
   validateFilePath(relativePath);
   const fullPath = resolveVaultPath(relativePath);
@@ -184,6 +195,14 @@ export async function appendToNote(
 
   // Append content
   const newContent = existing.content.trimEnd() + separator + content;
+
+  // Check resulting size before writing
+  if (newContent.length > MAX_CONTENT_SIZE) {
+    throw new VaultError(
+      `Resulting content would exceed maximum size of ${Math.round(MAX_CONTENT_SIZE / 1000)}KB (would be ${Math.round(newContent.length / 1000)}KB). Consider archiving old content or splitting into a new file.`,
+      "CONTENT_TOO_LARGE"
+    );
+  }
 
   const serialized = matter.stringify(newContent, fm);
   await atomicWrite(fullPath, serialized);
@@ -293,6 +312,7 @@ export async function listFiles(
   options: {
     recursive?: boolean;
     pattern?: string;
+    depth?: number;
   } = {}
 ): Promise<FileInfo[]> {
   const fullPath = resolveVaultPath(relativePath);
@@ -317,6 +337,14 @@ export async function listFiles(
 
   const results: FileInfo[] = [];
   for (const match of matches.sort()) {
+    // Apply depth filter if specified
+    if (options.depth !== undefined && options.recursive) {
+      const depth = match.split(path.sep).length;
+      if (depth > options.depth) {
+        continue;
+      }
+    }
+
     const matchFull = path.join(fullPath, match);
     try {
       const s = await fs.stat(matchFull);
@@ -478,7 +506,8 @@ export type VaultErrorCode =
   | "NOT_FOUND"
   | "ALREADY_EXISTS"
   | "PATCH_NOT_FOUND"
-  | "PATCH_AMBIGUOUS";
+  | "PATCH_AMBIGUOUS"
+  | "CONTENT_TOO_LARGE";
 
 export class VaultError extends Error {
   code: VaultErrorCode;

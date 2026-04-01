@@ -92,21 +92,27 @@ export function registerSearchTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe("List recursively"),
+        depth: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum depth when recursive (1 = immediate children only, 2 = children and grandchildren, etc.)"),
         pattern: z
           .string()
           .optional()
           .describe("Glob pattern to filter results (e.g. '*.md', '**/*task*')"),
       },
     },
-    async ({ path: dirPath, recursive, pattern }) => {
+    async ({ path: dirPath, recursive, depth, pattern }) => {
       try {
-        const files = await listFiles(dirPath, { recursive, pattern });
+        const files = await listFiles(dirPath, { recursive, pattern, depth });
         return {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify(
-                { path: dirPath || "/", total: files.length, files },
+                { path: dirPath || "/", total: files.length, depth: depth || (recursive ? "unlimited" : 1), files },
                 null,
                 2
               ),

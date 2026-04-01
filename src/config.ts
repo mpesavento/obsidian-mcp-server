@@ -10,7 +10,11 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3100),
   AGENT_NAME_DEFAULT: z.string().default("claude"),
   SERVER_URL: z.string().url().optional(),
+  MAX_CONTENT_SIZE: z.coerce.number().int().positive().default(500000), // 500KB default
 });
+
+// Export max content size for use in vault operations
+export const MAX_CONTENT_SIZE_BYTES = 500000; // 500KB - can be overridden by env
 
 export type Config = z.infer<typeof envSchema>;
 
