@@ -20,6 +20,9 @@ export async function startHttpTransport(): Promise<void> {
   const config = getConfig();
   const app = express();
 
+  // Trust proxy headers (required when behind Tailscale/reverse proxy)
+  app.set("trust proxy", true);
+
   const serverUrl = new URL(
     config.SERVER_URL || `http://localhost:${config.PORT}`
   );
