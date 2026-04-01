@@ -27,7 +27,7 @@ export function registerSearchTools(server: McpServer): void {
         max_results: z
           .number()
           .int()
-          .positive()
+          .min(1)
           .default(20)
           .describe("Maximum number of results to return"),
       },
@@ -95,7 +95,7 @@ export function registerSearchTools(server: McpServer): void {
         depth: z
           .number()
           .int()
-          .positive()
+          .min(1)
           .optional()
           .describe("Maximum depth when recursive (1 = immediate children only, 2 = children and grandchildren, etc.)"),
         pattern: z
@@ -135,7 +135,7 @@ export function registerSearchTools(server: McpServer): void {
         n: z
           .number()
           .int()
-          .positive()
+          .min(1)
           .default(10)
           .describe("Number of recent notes to return"),
         path_filter: z

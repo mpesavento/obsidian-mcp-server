@@ -54,7 +54,7 @@ export function registerSemanticTools(server: McpServer): void {
         max_results: z
           .number()
           .int()
-          .positive()
+          .min(1)
           .default(10)
           .describe("Maximum number of results to return"),
         search_filenames: z

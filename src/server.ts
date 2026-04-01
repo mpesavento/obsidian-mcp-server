@@ -21,7 +21,7 @@ import { registerSemanticTools } from "./tools/semantic.js";
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "obsidian-vault",
-    version: "0.1.0",
+    version: "0.2.0",  // Bumped to force Claude.ai cache refresh
   });
 
   // Order matters for Claude.ai tool cap - register highest priority first
