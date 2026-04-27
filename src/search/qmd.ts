@@ -35,11 +35,24 @@ const ZONE_PREFIXES: Record<string, string> = {
 };
 
 /**
+ * Resolve the qmd binary. Honors QMD_BIN if set (absolute path or name on PATH),
+ * otherwise falls back to "qmd" from PATH.
+ *
+ * Why: when this server runs under systemd, the unit's PATH does not include
+ * ~/.local/bin or ~/.npm-global/bin by default — so spawn("qmd") ENOENTs even
+ * when qmd is installed and works in the user's shell. Setting QMD_BIN in the
+ * unit (or .env) sidesteps the systemd-PATH gotcha entirely.
+ */
+function getQmdBin(): string {
+  return process.env.QMD_BIN || "qmd";
+}
+
+/**
  * Check if QMD CLI is available
  */
 export async function isQmdAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
-    const proc = spawn("qmd", ["--help"], {
+    const proc = spawn(getQmdBin(), ["--help"], {
       stdio: ["ignore", "ignore", "ignore"],
     });
     proc.on("error", () => resolve(false));
@@ -208,7 +221,7 @@ export async function qmdUpdateIndex(): Promise<string> {
  */
 async function runQmd(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("qmd", args, {
+    const proc = spawn(getQmdBin(), args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
