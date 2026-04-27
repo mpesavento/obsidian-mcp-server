@@ -130,6 +130,8 @@ curl https://YOUR-PI-HOSTNAME.tail12345.ts.net/health
 
 You have two options: **user-level** (recommended for personal use) or **system-level**.
 
+> **Pick one — don't install both.** If both A and B are enabled they will fight over port 3100. Whichever loses the race exits cleanly, restarts in 5s, and burns CPU forever in a silent restart loop. (Ask me how I know.)
+
 #### Option A: User-level service (recommended)
 
 User-level services are easier to manage, don't require sudo, and run with your normal file permissions.
@@ -152,6 +154,11 @@ RestartSec=5
 # The .env file in WorkingDirectory is loaded automatically by dotenv
 # Add any additional environment variables here:
 Environment=QMD_COLLECTION=exobrain
+# Required if you use QMD: systemd's default PATH excludes ~/.local/bin and
+# ~/.npm-global/bin, so spawn("qmd") would ENOENT even though qmd is installed.
+# Either set PATH explicitly here, or set QMD_BIN to the absolute path of qmd.
+Environment="PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+# Alternative: Environment=QMD_BIN=/home/YOUR_USER/.local/bin/qmd
 
 [Install]
 WantedBy=default.target
@@ -198,6 +205,11 @@ Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+# Required if you use QMD — see Option A above for the rationale.
+# Either set PATH explicitly:
+Environment="PATH=/home/pi/.local/bin:/home/pi/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+# Or set QMD_BIN to an absolute path:
+# Environment=QMD_BIN=/home/pi/.local/bin/qmd
 
 [Install]
 WantedBy=multi-user.target
@@ -225,6 +237,37 @@ lsof -i :3100
 kill <PID>
 # Then restart
 systemctl --user restart obsidian-mcp-server
+```
+
+#### Troubleshooting: `vault_search_status` reports `QMD is not installed`
+
+If `qmd --help` works fine in your shell but the MCP server insists QMD is not installed, the cause is almost always systemd's default `PATH`. systemd does not inherit your shell's PATH — it uses a minimal one that excludes `~/.local/bin` and `~/.npm-global/bin`, where most QMD installs land.
+
+Two fixes (either works):
+
+```ini
+# Option 1: set PATH so spawn("qmd") resolves
+Environment="PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Option 2: skip PATH entirely; point at the binary directly
+Environment=QMD_BIN=/home/YOUR_USER/.local/bin/qmd
+```
+
+Add either to your unit file, then `systemctl --user daemon-reload && systemctl --user restart obsidian-mcp-server`. To find where QMD lives: `which qmd`.
+
+#### Troubleshooting: silent restart loop (service appears to start, then exits cleanly)
+
+Symptoms: `journalctl` shows `Server started on HTTP transport`, then `Deactivated successfully` within 1s, then a restart 5s later — repeating forever. Restart counter climbs into the thousands.
+
+Cause: another process is already bound to port 3100 — usually a duplicate service (e.g. you installed both Option A and Option B). The new instance's `app.listen` succeeds at the syscall level (Linux can permit duplicate binds in some cases), but the OS will not deliver connections to it, so the process settles into a state where its event loop has no work and Node exits cleanly.
+
+Fix: pick one service, disable the other.
+```bash
+# See what's holding the port:
+sudo ss -tlnp 'sport = :3100'
+# Disable whichever duplicate you don't want:
+sudo systemctl disable --now obsidian-mcp.service       # if you're keeping user-level
+systemctl --user disable --now obsidian-mcp-server      # if you're keeping system-level
 ```
 
 ### Step 5: Set up QMD semantic search (optional)
