@@ -1,5 +1,6 @@
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
+import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 
 /**
  * Token verifier that accepts both OAuth-issued tokens and a static bearer token.
@@ -29,6 +30,9 @@ export class DualTokenVerifier implements OAuthTokenVerifier {
       };
     }
 
-    throw new Error("Invalid access token");
+    // Unknown/stale token: throw InvalidTokenError (not a plain Error) so the
+    // SDK's bearer middleware returns 401 + WWW-Authenticate — prompting the
+    // client to re-authenticate — instead of a 500 that reads as a hard failure.
+    throw new InvalidTokenError("Invalid or expired access token");
   }
 }

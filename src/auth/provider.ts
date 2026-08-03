@@ -9,6 +9,7 @@ import type {
 } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -252,13 +253,13 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const info = this.tokens.get(token);
     if (!info) {
-      throw new Error("Invalid access token");
+      throw new InvalidTokenError("Invalid access token");
     }
 
     if (info.expiresAt && info.expiresAt < Math.floor(Date.now() / 1000)) {
       this.tokens.delete(token);
       this.persist();
-      throw new Error("Access token expired");
+      throw new InvalidTokenError("Access token expired");
     }
 
     return info;
