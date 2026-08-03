@@ -20,8 +20,34 @@ export async function startHttpTransport(): Promise<void> {
   const config = getConfig();
   const app = express();
 
-  // Trust proxy headers (required when behind Tailscale/reverse proxy)
-  app.set("trust proxy", true);
+  // Trust exactly 1 proxy hop (Tailscale Funnel)
+  app.set("trust proxy", 1);
+
+  // CORS — required for the browser-based Claude.ai connector to reach the MCP
+  // endpoint. The SDK's mcpAuthRouter sets CORS on the OAuth endpoints, but the
+  // MCP data endpoint (/) had none, so browser preflight was blocked ("unable to
+  // connect"). Reflect the request origin, expose the session + auth headers the
+  // Streamable-HTTP transport relies on, and short-circuit preflight.
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    res.setHeader("Access-Control-Allow-Origin", origin ?? "*");
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Authorization, Content-Type, mcp-session-id, mcp-protocol-version, last-event-id, Accept"
+    );
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "mcp-session-id, WWW-Authenticate"
+    );
+    res.setHeader("Access-Control-Max-Age", "86400");
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
 
   const serverUrl = new URL(
     config.SERVER_URL || `http://localhost:${config.PORT}`

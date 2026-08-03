@@ -25,6 +25,7 @@ export class DualTokenVerifier implements OAuthTokenVerifier {
         token,
         clientId: "static-bearer",
         scopes: ["mcp:tools"],
+        expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600,
       };
     }
 

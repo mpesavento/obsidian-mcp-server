@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { Response } from "express";
 import type {
   OAuthServerProvider,
@@ -27,14 +30,89 @@ interface StoredRefreshToken {
 }
 
 /**
- * In-memory OAuth 2.1 provider for a single-user MCP server.
+ * OAuth 2.1 provider for a single-user MCP server.
  * Auto-approves all authorization requests (no consent UI).
+ *
+ * Registered clients, access tokens, and refresh tokens are persisted to disk so
+ * that a service restart does not invalidate an already-connected client (which
+ * otherwise surfaces in Claude.ai as "couldn't register with the sign-in
+ * service"). Authorization codes are short-lived and one-time-use, so they stay
+ * in memory only. Override the store location with OBSIDIAN_MCP_OAUTH_STORE.
  */
 export class PersonalOAuthProvider implements OAuthServerProvider {
   private clients = new Map<string, OAuthClientInformationFull>();
   private codes = new Map<string, StoredAuthCode>();
   private tokens = new Map<string, AuthInfo>();
   private refreshTokens = new Map<string, StoredRefreshToken>();
+
+  private readonly storePath =
+    process.env.OBSIDIAN_MCP_OAUTH_STORE ||
+    join(homedir(), ".config", "obsidian-mcp", "oauth-store.json");
+
+  constructor() {
+    this.load();
+  }
+
+  /** Load persisted clients/tokens from disk, dropping already-expired tokens. */
+  private load(): void {
+    let raw: string;
+    try {
+      raw = readFileSync(this.storePath, "utf8");
+    } catch {
+      return; // no store yet — first run
+    }
+    try {
+      const data = JSON.parse(raw);
+      const now = Math.floor(Date.now() / 1000);
+      for (const c of data.clients ?? []) {
+        this.clients.set(c.client_id, c as OAuthClientInformationFull);
+      }
+      for (const [token, info] of data.tokens ?? []) {
+        if (info.expiresAt && info.expiresAt < now) continue;
+        this.tokens.set(token, {
+          ...info,
+          resource: info.resource ? new URL(info.resource) : undefined,
+        } as AuthInfo);
+      }
+      for (const [token, rt] of data.refreshTokens ?? []) {
+        this.refreshTokens.set(token, {
+          ...rt,
+          resource: rt.resource ? new URL(rt.resource) : undefined,
+        } as StoredRefreshToken);
+      }
+    } catch (err) {
+      console.error(
+        `[obsidian-mcp] Failed to parse OAuth store at ${this.storePath}:`,
+        err
+      );
+    }
+  }
+
+  /** Atomically write clients/tokens to disk. Codes are intentionally omitted. */
+  private persist(): void {
+    const data = {
+      clients: [...this.clients.values()],
+      tokens: [...this.tokens.entries()].map(([token, info]) => [
+        token,
+        { ...info, resource: info.resource?.toString() },
+      ]),
+      refreshTokens: [...this.refreshTokens.entries()].map(([token, rt]) => [
+        token,
+        { ...rt, resource: rt.resource?.toString() },
+      ]),
+    };
+    try {
+      mkdirSync(dirname(this.storePath), { recursive: true });
+      const tmp = `${this.storePath}.tmp`;
+      writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
+      renameSync(tmp, this.storePath);
+    } catch (err) {
+      console.error(
+        `[obsidian-mcp] Failed to persist OAuth store to ${this.storePath}:`,
+        err
+      );
+    }
+  }
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
@@ -52,6 +130,7 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
           client_id_issued_at: Math.floor(Date.now() / 1000),
         };
         this.clients.set(clientId, full);
+        this.persist();
         return full;
       },
     };
@@ -128,6 +207,8 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
       resource: stored.resource,
     });
 
+    this.persist();
+
     return {
       access_token: accessToken,
       token_type: "Bearer",
@@ -158,6 +239,8 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
       resource: stored.resource,
     });
 
+    this.persist();
+
     return {
       access_token: accessToken,
       token_type: "Bearer",
@@ -174,6 +257,7 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
 
     if (info.expiresAt && info.expiresAt < Math.floor(Date.now() / 1000)) {
       this.tokens.delete(token);
+      this.persist();
       throw new Error("Access token expired");
     }
 
@@ -186,5 +270,6 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
   ): Promise<void> {
     this.tokens.delete(request.token);
     this.refreshTokens.delete(request.token);
+    this.persist();
   }
 }
