@@ -55,7 +55,7 @@ export function registerCrudTools(server: McpServer): void {
     {
       title: "Write Note",
       description:
-        "Create or overwrite a note. Auto-manages created/modified timestamps and created_by/last_modified_by in frontmatter. If the file exists, preserves original created/created_by values.",
+        "Create or overwrite a note. Auto-manages created/modified timestamps and created_by/last_modified_by in frontmatter. If the file exists, preserves original created/created_by values, and keeps its existing frontmatter when you pass none. A non-empty frontmatter object REPLACES the existing fields (use vault_frontmatter to change individual fields).",
       inputSchema: {
         path: z
           .string()
@@ -65,7 +65,7 @@ export function registerCrudTools(server: McpServer): void {
           .record(z.unknown())
           .optional()
           .describe(
-            "Additional frontmatter fields to set (created/modified/created_by/last_modified_by are auto-managed)"
+            "Frontmatter for the note (created/modified/created_by/last_modified_by are auto-managed). Omit to keep an existing note's frontmatter; if given, it replaces the existing fields."
           ),
         create_dirs: z
           .boolean()
@@ -227,7 +227,7 @@ export function registerCrudTools(server: McpServer): void {
     {
       title: "Move Note",
       description:
-        "Move or rename a note within the vault. Creates destination directories if needed.",
+        "Move or rename a note within the vault. Creates destination directories if needed and refuses to overwrite an existing note. By default, links to the note in other notes (wikilinks, embeds, markdown links; alias/#heading/^block kept) are rewritten, so nothing dangles. Notes in protected zones (LINK_REWRITE_SKIP, default: identity, daily notes, decisions.md, agent-comms) are never edited; they are listed in protected_skipped. Ambiguous links (several notes share the name) are listed, not guessed. Use dry_run to preview.",
       inputSchema: {
         from_path: z
           .string()
@@ -235,20 +235,53 @@ export function registerCrudTools(server: McpServer): void {
         to_path: z
           .string()
           .describe("New vault-relative path"),
+        update_links: z
+          .boolean()
+          .default(true)
+          .describe("Rewrite links in other notes that point at the moved note"),
+        dry_run: z
+          .boolean()
+          .default(false)
+          .describe("Report what would change without moving or editing anything"),
       },
     },
-    async ({ from_path, to_path }) => {
+    async ({ from_path, to_path, update_links, dry_run }) => {
       try {
-        await moveNote(from_path, to_path);
+        const r = await moveNote(from_path, to_path, {
+          updateLinks: update_links,
+          dryRun: dry_run,
+        });
+        const MAX = 50;
+        const cap = <T,>(items: T[]) => items.slice(0, MAX);
+        const sum = (items: { count: number }[]) =>
+          items.reduce((n, i) => n + i.count, 0);
         return {
+          isError: r.errors.length > 0,
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify({
-                success: true,
-                from: from_path,
-                to: to_path,
-              }),
+              text: JSON.stringify(
+                {
+                  success: r.errors.length === 0,
+                  from: from_path,
+                  to: to_path,
+                  dry_run: r.dryRun,
+                  update_links: r.updateLinks,
+                  notes_rewritten: r.rewritten.length,
+                  links_rewritten: sum(r.rewritten),
+                  rewritten: cap(r.rewritten),
+                  protected_skipped: cap(r.protectedSkipped),
+                  ambiguous: cap(r.ambiguous),
+                  warnings: r.warnings,
+                  errors: r.errors,
+                  truncated:
+                    r.rewritten.length > MAX ||
+                    r.protectedSkipped.length > MAX ||
+                    r.ambiguous.length > MAX,
+                },
+                null,
+                2
+              ),
             },
           ],
         };
