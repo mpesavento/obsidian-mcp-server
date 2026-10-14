@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import matter from "gray-matter";
 import { glob } from "glob";
 import { getConfig } from "./config.js";
+import { rewriteLinks, compileGlobs, type RewriteContext } from "./links.js";
 
 // Directories excluded from all operations
 const EXCLUDED_DIRS = new Set([".obsidian", ".trash", ".git", "node_modules"]);
@@ -141,13 +142,20 @@ export async function writeNote(
   const agentName = options.agentName || getConfig().AGENT_NAME_DEFAULT;
   const now = new Date().toISOString();
 
-  let fm: NoteFrontmatter = { ...(options.frontmatter || {}) };
+  const callerFm = options.frontmatter;
+  let fm: NoteFrontmatter = { ...(callerFm || {}) };
 
   // Check if file exists to decide created vs modified
   const exists = await fileExists(fullPath);
   if (exists) {
     // Preserve original created/created_by, update modified
     const existing = await readNote(relativePath);
+    // If the caller passed no frontmatter (omitted or empty), keep the note's
+    // existing fields rather than silently dropping them. Passing a non-empty
+    // object still replaces them, as before.
+    if (!callerFm || Object.keys(callerFm).length === 0) {
+      fm = { ...existing.frontmatter };
+    }
     fm.created = existing.frontmatter.created || fm.created || now;
     fm.created_by = existing.frontmatter.created_by || fm.created_by || agentName;
     fm.modified = now;
@@ -280,13 +288,51 @@ export async function deleteNote(relativePath: string): Promise<void> {
   await fs.rename(fullPath, trashPath);
 }
 
+export interface MoveOptions {
+  /** Rewrite links in other notes that point at the moved note (default true). */
+  updateLinks?: boolean;
+  /** Work out what would change and return it, without touching the vault (default false). */
+  dryRun?: boolean;
+}
+
+export interface MoveLinkReport {
+  path: string;
+  count: number;
+}
+
+export interface MoveResult {
+  from: string;
+  to: string;
+  updateLinks: boolean;
+  dryRun: boolean;
+  /** Notes whose links were rewritten (or would be, in a dry run). */
+  rewritten: MoveLinkReport[];
+  /** Notes in protected zones (LINK_REWRITE_SKIP) that still link to the old path. Left unchanged. */
+  protectedSkipped: MoveLinkReport[];
+  /** Notes with ambiguous links that might have meant the moved note. Left unchanged. */
+  ambiguous: MoveLinkReport[];
+  warnings: string[];
+  errors: Array<{ path: string; error: string }>;
+}
+
 /**
- * Move/rename a note within the vault.
+ * Move/rename a note within the vault and keep links to it valid.
+ *
+ * Unless updateLinks is false, wikilinks, embeds and markdown links in other
+ * notes that point at the moved note are rewritten (alias, #heading and ^block
+ * suffixes are preserved; links in code are left alone). Edits are made on the
+ * raw text, so the frontmatter of rewritten notes is not re-serialized and
+ * their modified/last_modified_by fields are not touched. Notes matching
+ * LINK_REWRITE_SKIP are never edited; they are reported in protectedSkipped.
+ * Ambiguous links (several notes share the name) are reported, not guessed at.
+ *
+ * Refuses to overwrite an existing note. With dryRun, nothing is changed.
  */
 export async function moveNote(
   fromPath: string,
-  toPath: string
-): Promise<void> {
+  toPath: string,
+  options: MoveOptions = {}
+): Promise<MoveResult> {
   fromPath = ensureMdExtension(fromPath);
   toPath = ensureMdExtension(toPath);
   validateFilePath(fromPath);
@@ -294,14 +340,128 @@ export async function moveNote(
 
   const fullFrom = resolveVaultPath(fromPath);
   const fullTo = resolveVaultPath(toPath);
+  const updateLinks = options.updateLinks ?? true;
+  const dryRun = options.dryRun ?? false;
 
   if (!(await fileExists(fullFrom))) {
     throw new VaultError(`Note not found: ${fromPath}`, "NOT_FOUND");
   }
+  if (fullFrom === fullTo) {
+    throw new VaultError(
+      `Source and destination are the same: ${fromPath}`,
+      "ALREADY_EXISTS"
+    );
+  }
+  if (await fileExists(fullTo)) {
+    // A case-only rename on a case-insensitive filesystem points at the same
+    // file and is fine; anything else would silently overwrite another note.
+    const [a, b] = await Promise.all([fs.stat(fullFrom), fs.stat(fullTo)]);
+    if (a.ino !== b.ino || a.dev !== b.dev) {
+      throw new VaultError(
+        `Destination already exists: ${toPath}`,
+        "ALREADY_EXISTS"
+      );
+    }
+  }
 
-  // Create destination directory if needed
+  const result: MoveResult = {
+    from: fromPath,
+    to: toPath,
+    updateLinks,
+    dryRun,
+    rewritten: [],
+    protectedSkipped: [],
+    ambiguous: [],
+    warnings: [],
+    errors: [],
+  };
+
+  const from = toPosix(fromPath);
+  const to = toPosix(toPath);
+  let oldPaths: string[] = [];
+  let newPaths: string[] = [];
+  const ctxFor = (p: string): RewriteContext => ({
+    oldPath: from,
+    newPath: to,
+    sourceOld: p,
+    sourceNew: p === from ? to : p,
+    oldPaths,
+    newPaths,
+  });
+  const toEdit: string[] = [];
+
+  if (updateLinks) {
+    oldPaths = await listNotePaths();
+    newPaths = oldPaths.map((p) => (p === from ? to : p));
+
+    const newBase = path.posix.basename(to, ".md");
+    const clashes = oldPaths.filter(
+      (p) =>
+        p !== from &&
+        path.posix.basename(p, ".md").toLowerCase() === newBase.toLowerCase()
+    );
+    if (clashes.length > 0) {
+      result.warnings.push(
+        `Another note is already named "${newBase}" (${clashes.slice(0, 5).join(", ")}). ` +
+          `Bare [[${newBase}]] links are now ambiguous; prefer path-qualified links.`
+      );
+    }
+
+    const isProtected = compileGlobs(getConfig().LINK_REWRITE_SKIP);
+    const needle = path.posix.basename(from, ".md").toLowerCase();
+
+    await mapLimit(oldPaths, 32, async (p) => {
+      let raw: string;
+      try {
+        raw = await fs.readFile(resolveVaultPath(p), "utf-8");
+      } catch (err) {
+        result.warnings.push(`Could not scan ${p}: ${errorMessage(err)}`);
+        return;
+      }
+      // The moved note is always processed (its own relative links may need
+      // adjusting); others only if they mention the old name at all.
+      if (p !== from && !raw.toLowerCase().includes(needle)) return;
+
+      const r = rewriteLinks(raw, ctxFor(p));
+      if (r.ambiguous > 0) result.ambiguous.push({ path: p, count: r.ambiguous });
+      if (r.count === 0) return;
+      if (p !== from && isProtected(p)) {
+        result.protectedSkipped.push({ path: p, count: r.count });
+      } else {
+        result.rewritten.push({ path: p, count: r.count });
+        toEdit.push(p);
+      }
+    });
+
+    const byPath = (a: MoveLinkReport, b: MoveLinkReport) =>
+      a.path.localeCompare(b.path);
+    result.rewritten.sort(byPath);
+    result.protectedSkipped.sort(byPath);
+    result.ambiguous.sort(byPath);
+    result.warnings.sort();
+  }
+
+  if (dryRun) return result;
+
+  // Create destination directory if needed, then move.
   await fs.mkdir(path.dirname(fullTo), { recursive: true });
   await fs.rename(fullFrom, fullTo);
+
+  // Rewrite links. Each note is re-read and re-processed right before writing,
+  // so edits made by another agent since the scan are not overwritten.
+  for (const p of toEdit) {
+    const actual = p === from ? to : p;
+    try {
+      const full = resolveVaultPath(actual);
+      const raw = await fs.readFile(full, "utf-8");
+      const r = rewriteLinks(raw, ctxFor(p));
+      if (r.count > 0) await atomicWrite(full, r.text);
+    } catch (err) {
+      result.errors.push({ path: actual, error: errorMessage(err) });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -475,6 +635,44 @@ export async function vaultInfo(): Promise<{
 }
 
 // --- Internal helpers ---
+
+function toPosix(p: string): string {
+  return p.split(path.sep).join("/");
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Vault-relative POSIX paths of every note, sorted. */
+async function listNotePaths(): Promise<string[]> {
+  const vaultRoot = path.resolve(getConfig().VAULT_PATH);
+  const matches = await glob("**/*.md", {
+    cwd: vaultRoot,
+    dot: false,
+    ignore: [...EXCLUDED_DIRS].map((d) => `**/${d}/**`),
+  });
+  return matches.map(toPosix).sort();
+}
+
+/** Run fn over items with at most `limit` in flight. */
+async function mapLimit<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (next < items.length) {
+        const item = items[next++];
+        await fn(item);
+      }
+    }
+  );
+  await Promise.all(workers);
+}
 
 async function fileExists(fullPath: string): Promise<boolean> {
   try {

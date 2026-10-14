@@ -11,6 +11,11 @@ const envSchema = z.object({
   AGENT_NAME_DEFAULT: z.string().default("claude"),
   SERVER_URL: z.string().url().optional(),
   MAX_CONTENT_SIZE: z.coerce.number().int().positive().default(500000), // 500KB default
+  // Comma-separated globs (vault-relative, `*` and `**`). vault_move never rewrites links inside
+  // matching notes; it reports them instead. Set to an empty string to protect nothing.
+  LINK_REWRITE_SKIP: z
+    .string()
+    .default("10-identity/**,60-daily/**,**/decisions.md,00-meta/agent-comms/**"),
 });
 
 // Export max content size for use in vault operations
