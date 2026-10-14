@@ -240,6 +240,8 @@ describe("DualTokenVerifier", () => {
     const info = await verifier.verifyAccessToken("my-secret-token");
     expect(info.clientId).toBe("static-bearer");
     expect(info.scopes).toEqual(["mcp:tools"]);
+    // SDK >=1.27 requireBearerAuth requires expiresAt to be set.
+    expect(info.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
   });
 
   it("accepts OAuth tokens", async () => {
@@ -283,7 +285,7 @@ describe("DualTokenVerifier", () => {
 
     await expect(
       verifier.verifyAccessToken("wrong-token")
-    ).rejects.toThrow("Invalid access token");
+    ).rejects.toThrow("Invalid or expired access token");
   });
 
   it("works without static token configured", async () => {
