@@ -9,6 +9,7 @@ import { createServer } from "../server.js";
 import { getConfig } from "../config.js";
 import { PersonalOAuthProvider } from "../auth/provider.js";
 import { DualTokenVerifier } from "../auth/bearer.js";
+import { rejectSession } from "./session-errors.js";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 
@@ -125,16 +126,7 @@ export async function startHttpTransport(): Promise<void> {
       const server = createServer();
       await server.connect(transport);
     } else {
-      res.status(400).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32000,
-          message: sessionId
-            ? "Invalid or expired session"
-            : "Missing session ID or not an initialization request",
-        },
-        id: null,
-      });
+      rejectSession(res, sessionId);
       return;
     }
 
@@ -146,11 +138,7 @@ export async function startHttpTransport(): Promise<void> {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     if (!sessionId || !transports.has(sessionId)) {
-      res.status(400).json({
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "Invalid or missing session" },
-        id: null,
-      });
+      rejectSession(res, sessionId, "Missing session ID");
       return;
     }
 
@@ -163,11 +151,7 @@ export async function startHttpTransport(): Promise<void> {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     if (!sessionId || !transports.has(sessionId)) {
-      res.status(400).json({
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "Invalid or missing session" },
-        id: null,
-      });
+      rejectSession(res, sessionId, "Missing session ID");
       return;
     }
 
