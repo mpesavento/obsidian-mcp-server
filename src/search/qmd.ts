@@ -176,36 +176,40 @@ export async function qmdHybridQuery(
 }
 
 /**
- * Get collection status
+ * Get collection status.
+ *
+ * `qmd collection list` stopped printing an "Embeddings:" line, so parsing it
+ * always reported hasEmbeddings=false even when vector search worked. The
+ * vector count now comes from `qmd status` ("Vectors: N embedded"). That count
+ * is for the whole index; qmd doesn't break it down per collection.
  */
 export async function qmdStatus(): Promise<{
   collection: string;
   files: number;
+  vectors: number;
   hasEmbeddings: boolean;
 }> {
   const collectionName = getCollectionName();
   const output = await runQmd(["collection", "list"]);
-  
-  // Parse collection info from output
-  const lines = output.split("\n");
+
   let files = 0;
-  let hasEmbeddings = false;
-  
   let inCollection = false;
-  for (const line of lines) {
-    if (line.includes(`${collectionName} (`)) {
-      inCollection = true;
-    }
+  for (const line of output.split("\n")) {
+    if (line.includes(`${collectionName} (`)) inCollection = true;
     if (inCollection && line.includes("Files:")) {
       const match = line.match(/Files:\s+(\d+)/);
       if (match) files = parseInt(match[1], 10);
     }
-    if (inCollection && line.includes("Embeddings:")) {
-      hasEmbeddings = !line.includes("none");
-    }
   }
-  
-  return { collection: collectionName, files, hasEmbeddings };
+
+  const vectors = parseVectorCount(await runQmd(["status"]));
+  return { collection: collectionName, files, vectors, hasEmbeddings: vectors > 0 };
+}
+
+/** Parse "Vectors:  2635 embedded" out of `qmd status` output; 0 if absent. */
+export function parseVectorCount(statusOutput: string): number {
+  const match = statusOutput.match(/Vectors:\s+(\d+)\s+embedded/);
+  return match ? parseInt(match[1], 10) : 0;
 }
 
 /**

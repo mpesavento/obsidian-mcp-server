@@ -2,12 +2,37 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import matter from "gray-matter";
+import yaml from "js-yaml";
 import { glob } from "glob";
 import { getConfig } from "./config.js";
 import { rewriteLinks, compileGlobs, type RewriteContext } from "./links.js";
 
 // Directories excluded from all operations
 const EXCLUDED_DIRS = new Set([".obsidian", ".trash", ".git", "node_modules"]);
+
+/**
+ * Frontmatter is parsed and written with the YAML JSON schema, so timestamps
+ * stay as the strings the author wrote. With gray-matter's default schema a bare
+ * `date: 2026-03-02` became a Date and was written back as
+ * `2026-03-02T00:00:00.000Z`, and offset datetimes were rewritten to UTC.
+ */
+const MATTER_OPTIONS = {
+  engines: {
+    yaml: {
+      parse: (str: string): object =>
+        (yaml.load(str, { schema: yaml.JSON_SCHEMA }) as object) ?? {},
+      stringify: (obj: object): string => yaml.dump(obj, { schema: yaml.JSON_SCHEMA }),
+    },
+  },
+};
+
+function parseNote(raw: string) {
+  return matter(raw, MATTER_OPTIONS);
+}
+
+function stringifyNote(content: string, fm: NoteFrontmatter): string {
+  return matter.stringify(content, fm, MATTER_OPTIONS);
+}
 
 // Allowed file extensions
 const ALLOWED_EXTENSIONS = new Set([".md"]);
@@ -104,7 +129,7 @@ export async function readNote(relativePath: string): Promise<NoteData> {
     throw err;
   }
 
-  const parsed = matter(raw);
+  const parsed = parseNote(raw);
   return {
     path: relativePath,
     frontmatter: (parsed.data as NoteFrontmatter) || {},
@@ -171,7 +196,7 @@ export async function writeNote(
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
   }
 
-  const serialized = matter.stringify(content, fm);
+  const serialized = stringifyNote(content, fm);
   await atomicWrite(fullPath, serialized);
 }
 
@@ -212,7 +237,7 @@ export async function appendToNote(
     );
   }
 
-  const serialized = matter.stringify(newContent, fm);
+  const serialized = stringifyNote(newContent, fm);
   await atomicWrite(fullPath, serialized);
 }
 
@@ -254,22 +279,43 @@ export async function patchNote(
     );
   }
 
-  // Replace the string
-  const newContent = existing.content.replace(oldStr, newStr);
+  // Replace the string. A replacer function, not a string: in a replacement
+  // string JS expands $`, $', $& and $$, which pasted surrounding note text
+  // into the note whenever new_str contained them (e.g. a regex ending in "$`").
+  const newContent = existing.content.replace(oldStr, () => newStr);
 
   // Update frontmatter
   const fm: NoteFrontmatter = { ...existing.frontmatter };
   fm.modified = now;
   fm.last_modified_by = agentName;
 
-  const serialized = matter.stringify(newContent, fm);
+  const serialized = stringifyNote(newContent, fm);
   await atomicWrite(fullPath, serialized);
 
   return { matchCount: 1 };
 }
 
 /**
- * Soft-delete a note by moving it to .trash/.
+ * A path in .trash/ for `basename` that doesn't overwrite an earlier delete.
+ * Two notes with the same filename used to land on the same .trash path, and
+ * the second delete replaced the first.
+ */
+async function uniqueTrashPath(trashDir: string, basename: string): Promise<string> {
+  const candidate = path.join(trashDir, basename);
+  if (!(await fileExists(candidate))) return candidate;
+  const ext = path.extname(basename);
+  const stem = basename.slice(0, basename.length - ext.length);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  for (let n = 1; ; n++) {
+    const suffix = n === 1 ? stamp : `${stamp}-${n}`;
+    const next = path.join(trashDir, `${stem} (deleted ${suffix})${ext}`);
+    if (!(await fileExists(next))) return next;
+  }
+}
+
+/**
+ * Soft-delete a note by moving it to .trash/. Never overwrites an earlier
+ * deleted note with the same filename; see uniqueTrashPath.
  */
 export async function deleteNote(relativePath: string): Promise<void> {
   relativePath = ensureMdExtension(relativePath);
@@ -284,7 +330,7 @@ export async function deleteNote(relativePath: string): Promise<void> {
   const trashDir = path.join(config.VAULT_PATH, ".trash");
   await fs.mkdir(trashDir, { recursive: true });
 
-  const trashPath = path.join(trashDir, path.basename(relativePath));
+  const trashPath = await uniqueTrashPath(trashDir, path.basename(relativePath));
   await fs.rename(fullPath, trashPath);
 }
 
@@ -586,7 +632,7 @@ export async function updateFrontmatter(
   const fullPath = resolveVaultPath(relativePath);
   const fm: NoteFrontmatter = { ...note.frontmatter, ...updates };
 
-  const serialized = matter.stringify(note.content, fm);
+  const serialized = stringifyNote(note.content, fm);
   await atomicWrite(fullPath, serialized);
 
   return fm;
