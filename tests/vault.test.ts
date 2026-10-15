@@ -13,6 +13,7 @@ const {
   readNote,
   writeNote,
   appendToNote,
+  patchNote,
   deleteNote,
   moveNote,
   listFiles,
@@ -166,6 +167,98 @@ describe("vault", () => {
 
     it("throws NOT_FOUND for missing files", async () => {
       await expect(deleteNote("nonexistent.md")).rejects.toThrow(VaultError);
+    });
+
+    it("never overwrites an earlier deleted note with the same filename", async () => {
+      await fs.mkdir(path.join(TEST_VAULT, "other"), { recursive: true });
+      await writeNote("notes/same.md", "first");
+      await writeNote("other/same.md", "second");
+      await writeNote("notes/same2.md", "third");
+      await deleteNote("notes/same.md");
+      await deleteNote("other/same.md");
+      await writeNote("notes/same.md", "fourth");
+      await deleteNote("notes/same.md");
+
+      const trash = (await fs.readdir(path.join(TEST_VAULT, ".trash"))).filter((f) =>
+        f.startsWith("same")
+      );
+      expect(trash.length).toBe(3);
+      const bodies = await Promise.all(
+        trash.map((f) => fs.readFile(path.join(TEST_VAULT, ".trash", f), "utf-8"))
+      );
+      for (const word of ["first", "second", "fourth"]) {
+        expect(bodies.some((b) => b.includes(word))).toBe(true);
+      }
+      expect(trash).toContain("same.md");
+    });
+  });
+
+  describe("patchNote", () => {
+    it.each(["$`", "$'", "$&", "$$", "end of regex /^foo$`"])(
+      "writes %s in new_str literally instead of expanding it",
+      async (special) => {
+        await writeNote("notes/patch.md", "before MARKER after");
+        await patchNote("notes/patch.md", "MARKER", `X${special}Y`);
+        const note = await readNote("notes/patch.md");
+        expect(note.content.trim()).toBe(`before X${special}Y after`);
+      }
+    );
+  });
+
+  describe("frontmatter date preservation", () => {
+    const raw = [
+      "---",
+      "date: 2026-03-02",
+      "due: 2026-03-02T10:30:00-08:00",
+      "created: '2026-01-01T00:00:00.000Z'",
+      "tags:",
+      "  - a",
+      "---",
+      "Body MARKER",
+      "",
+    ].join("\n");
+
+    async function fresh() {
+      await fs.writeFile(path.join(TEST_VAULT, "notes/dates.md"), raw, "utf-8");
+    }
+    async function rawFm(): Promise<string> {
+      const text = await fs.readFile(path.join(TEST_VAULT, "notes/dates.md"), "utf-8");
+      return text.split("---")[1];
+    }
+    function expectDatesKept(fm: string) {
+      expect(fm).toMatch(/^date: 2026-03-02$/m);
+      // js-yaml quotes strings containing ':' on dump; the value is unchanged
+      // (same offset, not converted to UTC), which is what matters.
+      expect(fm).toMatch(/^due: '?2026-03-02T10:30:00-08:00'?$/m);
+      expect(fm).not.toContain("2026-03-02T00:00:00.000Z");
+      expect(fm).not.toContain("18:30:00.000Z");
+    }
+
+    it("readNote returns bare dates as the strings written", async () => {
+      await fresh();
+      const note = await readNote("notes/dates.md");
+      expect(note.frontmatter.date).toBe("2026-03-02");
+      expect(note.frontmatter.due).toBe("2026-03-02T10:30:00-08:00");
+    });
+
+    it("vault_patch keeps them", async () => {
+      await fresh();
+      await patchNote("notes/dates.md", "MARKER", "patched");
+      expectDatesKept(await rawFm());
+    });
+
+    it("vault_append keeps them", async () => {
+      await fresh();
+      await appendToNote("notes/dates.md", "more");
+      expectDatesKept(await rawFm());
+    });
+
+    it("vault_frontmatter keeps them", async () => {
+      await fresh();
+      await updateFrontmatter("notes/dates.md", { status: "done" });
+      const fm = await rawFm();
+      expectDatesKept(fm);
+      expect(fm).toMatch(/^status: done$/m);
     });
   });
 
