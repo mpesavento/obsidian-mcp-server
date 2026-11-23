@@ -15,7 +15,7 @@ if (process.argv.includes("--check")) {
 }
 
 const secret = generateTotpSecret();
-const uri = otpauthUri(secret, "vault-mcp", "ExoBrain");
+const uri = otpauthUri(secret, "vault", "Obsidian MCP");
 console.log(`CONSENT_TOTP_SECRET=${secret}`);
 console.log(`\notpauth URI (import into your authenticator):\n${uri}`);
 const out = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : null;

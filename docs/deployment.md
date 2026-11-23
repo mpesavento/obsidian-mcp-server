@@ -21,9 +21,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
   "mcpServers": {
     "obsidian-vault": {
       "command": "node",
-      "args": ["/Users/mpesavento/src/obsidian-mcp-server/dist/index.js"],
+      "args": ["/path/to/obsidian-mcp-server/dist/index.js"],
       "env": {
-        "VAULT_PATH": "/Users/mpesavento/Documents/Obsidian/ExoBrain"
+        "VAULT_PATH": "/path/to/your/vault"
       }
     }
   }
@@ -36,8 +36,8 @@ Restart Claude Desktop after saving. The server runs as a subprocess — no port
 
 ```bash
 claude mcp add obsidian-vault \
-  -e VAULT_PATH=/Users/mpesavento/Documents/Obsidian/ExoBrain \
-  -- node /Users/mpesavento/src/obsidian-mcp-server/dist/index.js
+  -e VAULT_PATH=/path/to/your/vault \
+  -- node /path/to/obsidian-mcp-server/dist/index.js
 ```
 
 Verify:
@@ -71,7 +71,7 @@ cp .env.example .env
 
 Edit `.env`:
 ```bash
-VAULT_PATH=/home/pi/ExoBrain
+VAULT_PATH=/home/pi/vault
 AUTH_TOKEN=<generate with: openssl rand -hex 32>
 PORT=3100
 AGENT_NAME_DEFAULT=claude
@@ -141,12 +141,12 @@ mkdir -p ~/.config/systemd/user
 
 cat > ~/.config/systemd/user/obsidian-mcp-server.service << 'EOF'
 [Unit]
-Description=Obsidian MCP Server (ExoBrain)
+Description=Obsidian MCP Server
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/mpesavento/projects/obsidian-mcp-server
+WorkingDirectory=/home/YOUR_USER/obsidian-mcp-server
 ExecStart=/usr/bin/node dist/index.js --transport http
 Restart=always
 RestartSec=5
