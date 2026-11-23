@@ -2,6 +2,23 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { PersonalOAuthProvider } from "../src/auth/provider.js";
 import { DualTokenVerifier } from "../src/auth/bearer.js";
 
+/**
+ * Stand-in for a consent approval: mint the code the way the ConsentGate does
+ * after a valid TOTP, and redirect. (The gate itself is tested in http.test.ts.)
+ */
+async function approve(
+  p: PersonalOAuthProvider,
+  client: any,
+  params: { codeChallenge: string; redirectUri: string; state?: string; scopes?: string[] },
+  res: { redirect: (url: string) => void }
+): Promise<void> {
+  const code = p.issueAuthorizationCode(client, params as any);
+  const u = new URL(params.redirectUri);
+  u.searchParams.set("code", code);
+  if (params.state) u.searchParams.set("state", params.state);
+  res.redirect(u.toString());
+}
+
 describe("PersonalOAuthProvider", () => {
   let provider: PersonalOAuthProvider;
 
@@ -37,6 +54,52 @@ describe("PersonalOAuthProvider", () => {
       expect(retrieved!.client_id).toBe(client.client_id);
     });
 
+    it("rejects registration with a non-allowlisted redirect URI", async () => {
+      await expect(
+        provider.clientsStore.registerClient!({
+          redirect_uris: [new URL("https://evil.example/callback")],
+          client_name: "Evil",
+        })
+      ).rejects.toThrow(/redirect_uris/);
+    });
+
+    it("accepts loopback redirects (Claude Code)", async () => {
+      const c = await provider.clientsStore.registerClient!({
+        redirect_uris: [new URL("http://localhost:53682/callback")],
+        client_name: "Claude Code",
+      });
+      expect(c.client_id).toBeDefined();
+    });
+
+    it("rejects loopback redirects when disabled, and https 'localhost' lookalikes", async () => {
+      const strict = new PersonalOAuthProvider({ allowLoopbackRedirects: false });
+      await expect(
+        strict.clientsStore.registerClient!({ redirect_uris: [new URL("http://localhost:1234/cb")] })
+      ).rejects.toThrow();
+      await expect(
+        provider.clientsStore.registerClient!({ redirect_uris: [new URL("http://localhost.evil.example/cb")] })
+      ).rejects.toThrow();
+    });
+
+    it("evicts the oldest clients past the cap", async () => {
+      const small = new PersonalOAuthProvider({ maxClients: 2 });
+      const a = await small.clientsStore.registerClient!({ redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")] });
+      a.client_id_issued_at = 1; // force oldest
+      await small.clientsStore.registerClient!({ redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")] });
+      await small.clientsStore.registerClient!({ redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")] });
+      expect(await small.clientsStore.getClient(a.client_id)).toBeUndefined();
+    });
+
+    it("authorize() fails closed with no consent gate", async () => {
+      const client = await provider.clientsStore.registerClient!({
+        redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")],
+      });
+      const res = { redirect: () => { throw new Error("must not redirect"); } } as any;
+      await expect(
+        provider.authorize(client, { codeChallenge: "x", redirectUri: "https://claude.ai/api/mcp/auth_callback" }, res)
+      ).rejects.toThrow(/consent/);
+    });
+
     it("returns undefined for unknown client", async () => {
       const result = await provider.clientsStore.getClient("nonexistent");
       expect(result).toBeUndefined();
@@ -58,7 +121,7 @@ describe("PersonalOAuthProvider", () => {
         },
       } as any;
 
-      await provider.authorize(
+      await approve(provider,
         client,
         {
           codeChallenge: "test-challenge",
@@ -103,7 +166,7 @@ describe("PersonalOAuthProvider", () => {
         },
       } as any;
 
-      await provider.authorize(
+      await approve(provider,
         client,
         {
           codeChallenge: "challenge",
@@ -125,7 +188,7 @@ describe("PersonalOAuthProvider", () => {
   describe("token verification", () => {
     it("verifies a valid access token", async () => {
       const client = await provider.clientsStore.registerClient!({
-        redirect_uris: [new URL("https://example.com/callback")],
+        redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")],
       });
 
       let code: string;
@@ -135,11 +198,11 @@ describe("PersonalOAuthProvider", () => {
         },
       } as any;
 
-      await provider.authorize(
+      await approve(provider,
         client,
         {
           codeChallenge: "c",
-          redirectUri: "https://example.com/callback",
+          redirectUri: "https://claude.ai/api/mcp/auth_callback",
           scopes: ["mcp:tools"],
         },
         mockRes
@@ -163,7 +226,7 @@ describe("PersonalOAuthProvider", () => {
   describe("refresh tokens", () => {
     it("exchanges a refresh token for a new access token", async () => {
       const client = await provider.clientsStore.registerClient!({
-        redirect_uris: [new URL("https://example.com/callback")],
+        redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")],
       });
 
       let code: string;
@@ -173,11 +236,11 @@ describe("PersonalOAuthProvider", () => {
         },
       } as any;
 
-      await provider.authorize(
+      await approve(provider,
         client,
         {
           codeChallenge: "c",
-          redirectUri: "https://example.com/callback",
+          redirectUri: "https://claude.ai/api/mcp/auth_callback",
         },
         mockRes
       );
@@ -200,7 +263,7 @@ describe("PersonalOAuthProvider", () => {
   describe("token revocation", () => {
     it("revokes an access token", async () => {
       const client = await provider.clientsStore.registerClient!({
-        redirect_uris: [new URL("https://example.com/callback")],
+        redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")],
       });
 
       let code: string;
@@ -210,11 +273,11 @@ describe("PersonalOAuthProvider", () => {
         },
       } as any;
 
-      await provider.authorize(
+      await approve(provider,
         client,
         {
           codeChallenge: "c",
-          redirectUri: "https://example.com/callback",
+          redirectUri: "https://claude.ai/api/mcp/auth_callback",
         },
         mockRes
       );
@@ -250,7 +313,7 @@ describe("DualTokenVerifier", () => {
 
     // Register client and get a token via OAuth
     const client = await oauthProvider.clientsStore.registerClient!({
-      redirect_uris: [new URL("https://example.com/callback")],
+      redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")],
     });
 
     let code: string;
@@ -260,11 +323,11 @@ describe("DualTokenVerifier", () => {
       },
     } as any;
 
-    await oauthProvider.authorize(
+    await approve(oauthProvider,
       client,
       {
         codeChallenge: "c",
-        redirectUri: "https://example.com/callback",
+        redirectUri: "https://claude.ai/api/mcp/auth_callback",
       },
       mockRes
     );

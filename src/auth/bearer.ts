@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
@@ -21,7 +22,7 @@ export class DualTokenVerifier implements OAuthTokenVerifier {
     }
 
     // Check static bearer token
-    if (this.staticToken && token === this.staticToken) {
+    if (this.staticToken && safeEqual(token, this.staticToken)) {
       return {
         token,
         clientId: "static-bearer",
@@ -35,4 +36,11 @@ export class DualTokenVerifier implements OAuthTokenVerifier {
     // client to re-authenticate — instead of a 500 that reads as a hard failure.
     throw new InvalidTokenError("Invalid or expired access token");
   }
+}
+
+/** Constant-time comparison (hash first so lengths match). */
+function safeEqual(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a).digest();
+  const hb = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ha, hb);
 }

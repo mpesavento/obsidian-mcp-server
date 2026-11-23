@@ -504,26 +504,22 @@ Tailscale Funnel makes the server reachable at a public HTTPS URL (`https://your
 - `/.well-known/oauth-protected-resource` — resource metadata (public by design)
 - `GET /authorize` — the OAuth authorization endpoint
 
-### The auto-approve concern
+### Consent gate (TOTP), registration allowlist, logging
 
-The OAuth `authorize` endpoint auto-approves all requests (no consent screen). This means anyone who:
-1. Discovers your Funnel URL
-2. Sends a valid OAuth registration request
-3. Follows the auth code flow
+Since 2026-11 the server no longer auto-approves. **The HTTP transport refuses to start without `CONSENT_TOTP_SECRET`.**
 
-...could obtain a valid access token and access the vault.
+- **`/authorize`** shows a consent page. A code is issued only after the current 6-digit TOTP code from the owner's authenticator app is entered.
+  - Protections: one-time use per 30 s step (no replay), 5 attempts per request, and a 15-minute lockout after 10 failures.
+  - You do this once per client connection. Refresh tokens keep it connected afterwards.
+- **`/register`** accepts only redirect URIs on the allowlist (`OAUTH_ALLOWED_REDIRECT_URIS`, by default the claude.ai/claude.com callbacks) plus loopback redirects for Claude Code (`OAUTH_ALLOW_LOOPBACK`). At most `OAUTH_MAX_CLIENTS` clients are kept, and the oldest are evicted first.
+- **CORS** allows only `CORS_ALLOWED_ORIGINS` and never reflects the Origin.
+- **Request log:** one JSON line per request (`REQUEST_LOG_PATH`) with time, method, path, status, client IP, user agent, client_id, and the JSON-RPC method, tool names and write flag. Tokens, codes and request bodies are never logged.
+- **Alerts** (`ALERT_TELEGRAM_BOT_TOKEN` + `ALERT_TELEGRAM_CHAT_ID`, otherwise stderr) fire on:
+  - every client registration, and every rejected one
+  - consent approvals, failed codes and lockouts
+  - 20 or more 401s from one IP within 10 minutes
 
-**Mitigations in place:**
-- The Tailscale hostname is obscure (not indexed, not guessable)
-- The `redirect_uri` in the auth flow is validated against the registered client's redirect URIs
-- OAuth tokens expire after 1 hour
-- The vault contains personal notes, not credentials or financial data
-
-**Optional hardening (if you want more protection):**
-
-Add a passphrase gate to the `/authorize` endpoint. The user would need to know a passphrase (set in `.env`) to complete the OAuth flow. This is a one-time step per device — once Claude.ai has a token, it refreshes automatically.
-
-To implement this, modify `src/auth/provider.ts`'s `authorize()` method to check for a `passphrase` query parameter or render a simple HTML form. This is documented as a future enhancement in the plan.
+Setup: `npm run build && node scripts/totp-setup.mjs qr.png`. Scan the QR into your authenticator, put the secret in `.env`, then delete `qr.png`. `node scripts/totp-setup.mjs --check` prints the current code.
 
 ### Cloud Run security
 
@@ -538,8 +534,8 @@ To implement this, modify `src/auth/provider.ts`'s `authorize()` method to check
 |----------|------|---------------------|
 | Local only (Desktop/Code) | None needed (stdio) | — |
 | Pi + Claude Code remote | Bearer token | Restrict Tailscale ACLs |
-| Pi + Claude.ai | OAuth auto-approve | Consider passphrase gate |
-| Cloud Run + Claude.ai | OAuth auto-approve | Service is public anyway; OAuth is sufficient |
+| Pi/Mac mini + Claude.ai | OAuth + TOTP consent gate | Request log + Telegram alerts |
+| Cloud Run + Claude.ai | OAuth + TOTP consent gate | Same |
 | Cloud Run + Claude Code | Bearer token | Token in Secret Manager |
 
 ---
@@ -556,7 +552,7 @@ Claude.ai accesses remote MCP servers via **Connectors** (Settings → Connector
 4. Claude.ai will:
    - Discover the OAuth metadata at `/.well-known/oauth-authorization-server`
    - Register itself as a client via `/register`
-   - Open a browser tab to `/authorize` (which auto-approves and redirects back)
+   - Open a browser tab to `/authorize`. Enter the current authenticator code and click Allow.
    - Exchange the auth code for a token at `/token`
 5. Once connected, the vault tools appear in Claude.ai's tool list
 
@@ -579,4 +575,4 @@ Same steps, but use the Cloud Run URL:
 **OAuth re-auth after server restart:**
 - OAuth tokens are stored in memory. A server restart invalidates all tokens.
 - Claude.ai will automatically re-authenticate via the refresh token or a new auth flow.
-- This is seamless due to auto-approve — no user interaction needed.
+- Refresh tokens are persisted, so a restart usually needs no action. A brand-new auth flow asks for the TOTP code again.

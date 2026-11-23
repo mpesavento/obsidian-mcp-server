@@ -146,7 +146,7 @@ src/
 ├── vault.ts              # Filesystem ops, path validation, atomic writes, frontmatter
 ├── links.ts              # Link parsing, resolution and rewriting for vault_move (pure functions)
 ├── auth/
-│   ├── provider.ts       # OAuth 2.1 server (auto-approve, in-memory)
+│   ├── provider.ts       # OAuth 2.1 server (TOTP consent gate, redirect allowlist)
 │   └── bearer.ts         # Dual token verifier (OAuth + static bearer)
 ├── transport/
 │   ├── stdio.ts          # Stdio transport (Claude Desktop / Code local)
