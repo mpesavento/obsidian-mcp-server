@@ -338,6 +338,8 @@ describe("HTTP transport security", () => {
       expect(raw).not.toContain(STATIC_TOKEN);
       expect(raw).not.toContain("secret body");
       expect(lines.some((l) => l.status === 401)).toBe(true);
+      // Paths inside SDK-mounted routers keep their full path.
+      expect(lines.some((l) => l.path === "/register")).toBe(true);
     });
   });
 });

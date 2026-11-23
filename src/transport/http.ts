@@ -11,7 +11,7 @@ import { PersonalOAuthProvider } from "../auth/provider.js";
 import { DualTokenVerifier } from "../auth/bearer.js";
 import { ConsentGate, CONSENT_PATH } from "../auth/consent.js";
 import { base32Decode } from "../auth/totp.js";
-import { createNotifier, type Notifier } from "../audit/alert.js";
+import { createNotifier, ConsoleNotifier, type Notifier } from "../audit/alert.js";
 import { RequestLog, AuthFailureWatch, requestLogger } from "../audit/request-log.js";
 import { rejectSession } from "./session-errors.js";
 
@@ -55,7 +55,9 @@ export function createApp(config: Config, deps: AppDeps = {}): express.Express {
 
   // Request log first, so it sees every request including rejected ones.
   const requestLog = deps.requestLog ?? new RequestLog(config.REQUEST_LOG_PATH);
-  app.use(requestLogger(requestLog, new AuthFailureWatch(notifier)));
+  // 401 bursts are common background noise from internet scanners, so they go
+  // to the service log (stderr) only, not to Telegram.
+  app.use(requestLogger(requestLog, new AuthFailureWatch(new ConsoleNotifier())));
 
   // CORS for the browser-based Claude.ai connector. Only allowlisted origins get
   // CORS headers; anything else is never reflected (the browser then blocks it).
