@@ -2,6 +2,7 @@
   "name": "obsidian-mcp-server",
   "version": "0.1.0",
   "description": "MCP server providing read/write access to an Obsidian vault",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

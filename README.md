@@ -163,3 +163,7 @@ src/
 ## Security
 
 The HTTP transport is meant to be reachable from the public internet, and it requires a TOTP consent gate to start. See [SECURITY.md](SECURITY.md) for the threat model, controls and rotation procedure.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
