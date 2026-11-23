@@ -137,6 +137,9 @@ export function requestLogger(
 ): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const start = process.hrtime.bigint();
+    // Capture now: req.path is rewritten relative to the mount point inside
+    // routers (the SDK mounts /register, /token, /.well-known/* that way).
+    const fullPath = req.originalUrl.split("?")[0];
     res.on("finish", () => {
       const authClient = (req as any).auth?.clientId as string | undefined;
       const paramClient =
@@ -147,7 +150,7 @@ export function requestLogger(
       const entry: RequestLogEntry = {
         ts: new Date().toISOString(),
         method: req.method,
-        path: req.path,
+        path: fullPath,
         status: res.statusCode,
         ms: Number((process.hrtime.bigint() - start) / 1_000_000n),
         ip: req.ip,
@@ -159,7 +162,7 @@ export function requestLogger(
         ...(xff ? { xff: Array.isArray(xff) ? xff.join(",") : xff } : {}),
         ...(req.headers["user-agent"] ? { ua: String(req.headers["user-agent"]).slice(0, 200) } : {}),
         ...(authClient || paramClient ? { client_id: authClient ?? paramClient } : {}),
-        ...(req.path === "/" && req.method === "POST" ? describeRpc((req as any).body) : {}),
+        ...(fullPath === "/" && req.method === "POST" ? describeRpc((req as any).body) : {}),
       };
       log.write(entry);
       if (res.statusCode === 401) watch?.record(req.ip);

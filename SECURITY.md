@@ -21,7 +21,7 @@ This server gives an AI client read **and write** access to a personal Obsidian 
 | **Audience check (RFC 8707)** | Tokens bound to a different resource are rejected. | `SERVER_URL` |
 | **Strict CORS** | Only allowlisted browser origins get CORS headers. The Origin is never reflected. Native clients and Anthropic's servers send no Origin and are unaffected. | `CORS_ALLOWED_ORIGINS` |
 | **Request log** | One JSON line per request with time, method, path, status, client IP, TCP peer, Funnel flag, user agent, `client_id`, JSON-RPC method, tool names and a write flag. **Never logged:** tokens, codes, query strings, request bodies. | `REQUEST_LOG_PATH` |
-| **Alerts** | Fired on: new client registrations and rejected ones; consent approvals, failed codes and lockouts; 20 or more 401s from one IP within 10 minutes. Sent via Telegram, or stderr when Telegram isn't configured. | `ALERT_TELEGRAM_BOT_TOKEN`, `ALERT_TELEGRAM_CHAT_ID` |
+| **Alerts** | Sent via Telegram (or stderr when Telegram isn't configured) on: new client registrations and rejected ones; consent approvals, failed codes and lockouts. Bursts of 20 or more 401s from one IP within 10 minutes go to stderr only, because scanners make them routine. | `ALERT_TELEGRAM_BOT_TOKEN`, `ALERT_TELEGRAM_CHAT_ID` |
 | **Static bearer token** | An optional side door for local clients (`AUTH_TOKEN`), compared in constant time. Anyone holding it has full access, so keep it out of shell history and rotate it if exposed. | `AUTH_TOKEN` |
 | **Deny by default** | Every MCP route requires a bearer token. Unknown paths return 404. Only `/health`, `HEAD /`, the OAuth metadata routes and the OAuth endpoints are public. Tests assert this. | — |
 
