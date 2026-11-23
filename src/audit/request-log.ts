@@ -27,6 +27,12 @@ export interface RequestLogEntry {
   status: number;
   ms: number;
   ip: string | undefined;
+  /** TCP peer. Loopback for anything that came through tailscaled. */
+  peer?: string;
+  /** True when tailscaled marked the request as public Funnel traffic. */
+  funnel?: boolean;
+  /** Tailnet identity (Serve, not Funnel). Forgeable by a local process that bypasses tailscaled. */
+  ts_user?: string;
   xff?: string;
   ua?: string;
   client_id?: string;
@@ -145,6 +151,11 @@ export function requestLogger(
         status: res.statusCode,
         ms: Number((process.hrtime.bigint() - start) / 1_000_000n),
         ip: req.ip,
+        peer: req.socket.remoteAddress,
+        funnel: req.headers["tailscale-funnel-request"] === "?1",
+        ...(req.headers["tailscale-user-login"]
+          ? { ts_user: String(req.headers["tailscale-user-login"]) }
+          : {}),
         ...(xff ? { xff: Array.isArray(xff) ? xff.join(",") : xff } : {}),
         ...(req.headers["user-agent"] ? { ua: String(req.headers["user-agent"]).slice(0, 200) } : {}),
         ...(authClient || paramClient ? { client_id: authClient ?? paramClient } : {}),
