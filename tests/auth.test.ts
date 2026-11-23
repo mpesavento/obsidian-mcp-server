@@ -260,6 +260,38 @@ describe("PersonalOAuthProvider", () => {
     });
   });
 
+  describe("refresh rotation and audience", () => {
+    it("rotates refresh tokens: the old one stops working", async () => {
+      const client = await provider.clientsStore.registerClient!({
+        redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")],
+      });
+      const code = provider.issueAuthorizationCode(client, { codeChallenge: "c", redirectUri: "https://claude.ai/api/mcp/auth_callback" } as any);
+      const t1 = await provider.exchangeAuthorizationCode(client, code);
+      const t2 = await provider.exchangeRefreshToken(client, t1.refresh_token!);
+      expect(t2.refresh_token).not.toBe(t1.refresh_token);
+      await expect(provider.exchangeRefreshToken(client, t1.refresh_token!)).rejects.toThrow();
+      await expect(provider.exchangeRefreshToken(client, t2.refresh_token!)).resolves.toBeDefined();
+    });
+
+    it("rejects a token bound to a different resource", async () => {
+      const p = new PersonalOAuthProvider({ resourceUrl: new URL("https://vault.example/") });
+      const client = await p.clientsStore.registerClient!({
+        redirect_uris: [new URL("https://claude.ai/api/mcp/auth_callback")],
+      });
+      const mk = async (resource?: string) => {
+        const code = p.issueAuthorizationCode(client, {
+          codeChallenge: "c",
+          redirectUri: "https://claude.ai/api/mcp/auth_callback",
+          resource: resource ? new URL(resource) : undefined,
+        } as any);
+        return (await p.exchangeAuthorizationCode(client, code)).access_token;
+      };
+      await expect(p.verifyAccessToken(await mk("https://other.example/"))).rejects.toThrow(/different resource/);
+      await expect(p.verifyAccessToken(await mk("https://vault.example"))).resolves.toBeDefined();
+      await expect(p.verifyAccessToken(await mk())).resolves.toBeDefined();
+    });
+  });
+
   describe("token revocation", () => {
     it("revokes an access token", async () => {
       const client = await provider.clientsStore.registerClient!({

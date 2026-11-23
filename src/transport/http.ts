@@ -93,6 +93,7 @@ export function createApp(config: Config, deps: AppDeps = {}): express.Express {
       allowLoopbackRedirects: config.OAUTH_ALLOW_LOOPBACK,
       maxClients: config.OAUTH_MAX_CLIENTS,
       notifier,
+      resourceUrl: serverUrl,
     });
   const consent = new ConsentGate({
     totpKey,

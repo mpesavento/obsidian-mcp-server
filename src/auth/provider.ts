@@ -52,6 +52,8 @@ export interface PersonalOAuthProviderOptions {
   /** Cap on registered clients; the oldest are evicted (with their tokens) past it. */
   maxClients?: number;
   notifier?: Notifier;
+  /** This server's canonical URL. Tokens bound (RFC 8707) to another resource are rejected. */
+  resourceUrl?: URL;
 }
 
 export function isAllowedRedirect(
@@ -100,6 +102,7 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
   private readonly allowLoopback: boolean;
   private readonly maxClients: number;
   private readonly notifier?: Notifier;
+  private readonly resourceUrl?: URL;
   private consent?: ConsentGate;
 
   constructor(opts: PersonalOAuthProviderOptions = {}) {
@@ -111,6 +114,7 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
     this.allowLoopback = opts.allowLoopbackRedirects ?? true;
     this.maxClients = opts.maxClients ?? 25;
     this.notifier = opts.notifier;
+    this.resourceUrl = opts.resourceUrl;
     this.load();
   }
 
@@ -326,6 +330,12 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
       throw new Error("Invalid refresh token");
     }
 
+    // Rotate (OAuth 2.1 / MCP spec MUST for public clients): the old refresh
+    // token is consumed and a new one issued, so a stolen one is single-use.
+    this.refreshTokens.delete(refreshToken);
+    const newRefreshToken = randomUUID();
+    this.refreshTokens.set(newRefreshToken, { ...stored });
+
     const accessToken = randomUUID();
     const expiresIn = 3600;
 
@@ -343,7 +353,7 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
       access_token: accessToken,
       token_type: "Bearer",
       expires_in: expiresIn,
-      refresh_token: refreshToken,
+      refresh_token: newRefreshToken,
     };
   }
 
@@ -351,6 +361,11 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
     const info = this.tokens.get(token);
     if (!info) {
       throw new InvalidTokenError("Invalid access token");
+    }
+
+    // Audience check (RFC 8707): a token minted for another resource is not ours.
+    if (this.resourceUrl && info.resource && !sameResource(info.resource, this.resourceUrl)) {
+      throw new InvalidTokenError("Token was issued for a different resource");
     }
 
     if (info.expiresAt && info.expiresAt < Math.floor(Date.now() / 1000)) {
@@ -370,4 +385,9 @@ export class PersonalOAuthProvider implements OAuthServerProvider {
     this.refreshTokens.delete(request.token);
     this.persist();
   }
+}
+
+function sameResource(a: URL, b: URL): boolean {
+  const norm = (u: URL) => `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
+  return norm(a) === norm(b);
 }
